@@ -1,0 +1,42 @@
+# Greasy Fork 页面说明
+
+以下内容可直接分别粘贴到 Greasy Fork 的简体中文和英文“脚本描述”中。
+
+## 简体中文
+
+本地整理 X/Twitter 正在关注列表：导出关注、匿名检查最近公开活动、按活跃天数和粉丝数筛选，并将确认过的账号分批取消关注。
+
+### 使用流程
+
+1. 安装脚本并登录 X，打开自己的“正在关注”页面。
+2. 按面板内“怎么复制 Following cURL？”的说明导出关注列表。
+3. 匿名探测公开主页，获取最近可见活动时间。
+4. 打开筛选页面，标记“保留”或“待取消”，然后发送队列。
+5. 返回 X，设置每批数量和间隔，确认后分批执行。
+
+### 主要功能
+
+- 关注列表断点导出
+- 匿名探测公开主页，不发送 X 登录 Cookie
+- 活跃天数、粉丝数和状态筛选
+- 批量标记、CSV 备份和多账号隔离
+- 活动取消队列、失败重试和已处理历史
+- 429 时停止并保留进度
+
+### 隐私与边界
+
+关注数据和审核标记默认保存在当前浏览器。筛选页面不会接收 X Cookie、`ct0`、Authorization 或原始 cURL。匿名探测仍会暴露当前网络 IP，也可能遇到限流。最近活动时间来自公开页面中可见的少量内容，不代表完整推文历史。
+
+## English
+
+Review your X/Twitter following list locally: export followed accounts, check recent public activity without X login cookies, filter by inactivity and follower count, then unfollow only confirmed accounts in controlled batches.
+
+### Quick start
+
+1. Install the script, sign in to X, and open your Following page.
+2. Follow the built-in “How do I copy the Following cURL?” guide to export the list.
+3. Probe public profiles for their latest visible activity.
+4. Open the dashboard, mark accounts as Keep or Remove, and send the queue.
+5. Return to X and run a confirmed batch with your chosen size and delay.
+
+Data stays in the current browser by default. The dashboard does not receive X cookies, `ct0`, Authorization headers, or the original cURL. Public probing may still be rate-limited and does not represent a complete post history.

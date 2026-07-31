@@ -2,20 +2,22 @@
   const styles = `
     #xfc-launch{position:fixed;right:18px;bottom:18px;z-index:2147483646;border:0;border-radius:999px;padding:11px 16px;background:#0f1419;color:#fff;font:700 13px system-ui;box-shadow:0 10px 35px #0004;cursor:pointer}
     #xfc-panel{position:fixed;right:18px;bottom:70px;z-index:2147483647;width:min(430px,calc(100vw - 28px));max-height:78vh;overflow:auto;overscroll-behavior:contain;border:1px solid #cfd9de;border-radius:18px;background:#fff;color:#0f1419;box-shadow:0 24px 80px #0005;font:13px/1.45 system-ui}
-    #xfc-panel[hidden]{display:none}#xfc-panel header{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:15px 17px;background:#fff;border-bottom:1px solid #eff3f4}
+    #xfc-panel[hidden]{display:none}#xfc-panel header{position:sticky;top:0;z-index:2;display:flex;justify-content:space-between;align-items:center;padding:15px 17px;background:#fff;border-bottom:1px solid #eff3f4}
     #xfc-panel .xfc-header-actions{display:flex;align-items:center;gap:7px}
     #xfc-panel h2,#xfc-panel p{margin:0}#xfc-panel h2{font-size:17px}#xfc-panel main{padding:14px 17px 18px}#xfc-panel section{padding:13px 0;border-bottom:1px solid #eff3f4}
     #xfc-panel section:last-child{border:0}#xfc-panel h3{margin:0 0 9px;font-size:13px}#xfc-panel textarea{width:100%;height:90px;box-sizing:border-box;padding:9px;border:1px solid #cfd9de;border-radius:9px;font:11px/1.4 ui-monospace,monospace;resize:vertical}
     #xfc-panel .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}#xfc-panel button,#xfc-panel a.xfc-btn{border:1px solid #cfd9de;border-radius:999px;padding:7px 11px;background:#fff;color:#0f1419;text-decoration:none;font:700 12px system-ui;cursor:pointer}
     #xfc-panel button.primary{background:#0f1419;color:#fff;border-color:#0f1419}#xfc-panel button.danger{background:#b42318;color:#fff;border-color:#b42318}
     #xfc-panel button.xfc-clear-danger{background:#fff0ee;color:#b42318;border-color:#f2a49d}
+    #xfc-panel button.xfc-help-button{width:31px;height:31px;padding:0;font-size:15px}
     #xfc-panel button:disabled{cursor:wait;opacity:.55}
     #xfc-panel label{display:flex;flex-direction:column;gap:4px;color:#536471;font-size:11px}#xfc-panel input{width:92px;padding:6px 8px;border:1px solid #cfd9de;border-radius:8px}#xfc-panel input[type=checkbox]{width:auto;padding:0}
     #xfc-account-summary{margin-bottom:5px;padding:9px;border-radius:9px;background:#fff8dc;color:#655016;font-size:10px}
+    #xfc-help{margin:12px 17px 0;padding:12px;border:1px solid #b9d8ee;border-radius:11px;background:#f1f8fd;color:#334b5b;font-size:11px}#xfc-help strong{display:block;margin-bottom:6px;color:#0f1419}#xfc-help ol{margin:0;padding-left:19px}#xfc-help li+li{margin-top:5px}#xfc-help p{margin-top:8px!important;color:#536471}
     .xfc-progress{margin-top:9px}.xfc-progress-track{height:7px;overflow:hidden;border-radius:999px;background:#eff3f4}.xfc-progress-bar{display:block;width:0;height:100%;border-radius:inherit;background:#1d9bf0;transition:width .2s ease}.xfc-progress.active.indeterminate .xfc-progress-bar{width:36%;animation:xfc-slide 1.15s ease-in-out infinite}.xfc-progress.complete .xfc-progress-bar{width:100%;background:#2e7d53}.xfc-progress.error .xfc-progress-bar{width:100%;background:#b42318}.xfc-progress.stopped .xfc-progress-bar{background:#b7791f}.xfc-progress small{display:block;margin-top:5px;color:#536471;font-size:10px}
     @keyframes xfc-slide{from{transform:translateX(-110%)}to{transform:translateX(300%)}}
     .xfc-queue-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:9px 0 6px}.xfc-queue-head strong{font-size:11px}.xfc-queue-list{height:118px!important;background:#f7f9f9!important;color:#536471!important}.xfc-queue-list[hidden]{display:none}
-    #xfc-panel details{margin-top:10px;padding:9px;border:1px solid #eff3f4;border-radius:10px;background:#f7f9f9}#xfc-panel summary{cursor:pointer;color:#536471;font-size:11px}#xfc-panel .xfc-template-note{margin-top:8px;color:#2e7d53;font-size:11px}
+    #xfc-panel details{margin-top:10px;padding:9px;border:1px solid #eff3f4;border-radius:10px;background:#f7f9f9}#xfc-panel summary{cursor:pointer;color:#536471;font-size:11px;font-weight:700}#xfc-panel details ol{margin:8px 0 0;padding-left:19px;color:#536471;font-size:11px}#xfc-panel details li+li{margin-top:4px}#xfc-panel .xfc-help-note{margin-top:8px!important;color:#2e7352;font-size:10px}#xfc-panel .xfc-template-note{margin-top:8px;color:#2e7d53;font-size:11px}
     #xfc-log{max-height:150px;min-height:50px;overflow:auto;margin-top:10px;padding:9px;border-radius:9px;background:#f7f9f9;color:#536471;font:10px/1.55 ui-monospace,monospace;white-space:pre-wrap}
   `;
 
@@ -37,15 +39,38 @@
           <header>
             <h2>关注清理助手</h2>
             <div class="xfc-header-actions">
+              <button class="xfc-help-button" id="xfc-help-toggle" title="使用帮助" aria-label="使用帮助" aria-expanded="false">❓</button>
               <button class="xfc-clear-danger" id="xfc-clear-data">清空当前账号数据</button>
               <button id="xfc-close">关闭</button>
             </div>
           </header>
+          <div id="xfc-help" hidden>
+            <strong>使用流程</strong>
+            <ol>
+              <li><b>导出关注列表：</b>从 X 读取当前账号的完整关注列表。</li>
+              <li><b>匿名探测：</b>不携带 X 登录 Cookie 请求公开主页，获取最近可见活动。</li>
+              <li><b>筛选与标记：</b>在筛选页标记保留或待取消账号。</li>
+              <li><b>发送队列：</b>把当前选择同步回油猴，已处理账号会自动排除。</li>
+              <li><b>分批取消：</b>返回 X，设置数量和间隔，确认后执行。</li>
+            </ol>
+            <p>数据默认保存在当前浏览器，建议定期导出 CSV。遇到 429 时请稍后继续。</p>
+          </div>
           <main>
             <div id="xfc-account-summary">正在读取本地进度…</div>
             <section>
               <h3>1. 导出关注列表（登录态）</h3>
-              <textarea id="xfc-following-curl" placeholder="粘贴 Following 的 Copy as cURL (bash)"></textarea>
+              <details>
+                <summary>怎么复制 Following cURL？</summary>
+                <ol>
+                  <li>打开自己的“正在关注”页面。</li>
+                  <li>按 <b>F12</b> 打开开发者工具，选择 <b>Network / 网络</b> 和 <b>Fetch/XHR</b>。</li>
+                  <li>搜索 <b>Following</b>，必要时向下滚动一次关注列表。</li>
+                  <li>右键 Following 请求，选择 <b>Copy → Copy as cURL (bash)</b>。</li>
+                  <li>把完整内容粘贴到下方。</li>
+                </ol>
+                <p class="xfc-help-note">只保存请求结构和分页参数，不保存原始 cURL、Cookie 或 ct0。</p>
+              </details>
+              <textarea id="xfc-following-curl" placeholder="在这里粘贴完整的 Following cURL"></textarea>
               <div class="row"><button class="primary" id="xfc-following-start">开始 / 继续导出</button></div>
               <div class="xfc-progress" id="xfc-following-progress" hidden><div class="xfc-progress-track"><span class="xfc-progress-bar"></span></div><small>等待开始</small></div>
             </section>
@@ -209,6 +234,11 @@
         await refreshQueue(false);
       };
       app.on("log", (event) => showLog(event.detail));
+      el("xfc-help-toggle").onclick = () => {
+        const help = el("xfc-help");
+        help.hidden = !help.hidden;
+        el("xfc-help-toggle").setAttribute("aria-expanded", String(!help.hidden));
+      };
       this.open = () => {
         el("xfc-panel").hidden = false;
         restoreState();

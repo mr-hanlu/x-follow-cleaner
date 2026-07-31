@@ -41,6 +41,13 @@ const elements = {
   previous: $("#previous-page"), next: $("#next-page"), pageSize: $("#page-size")
 };
 
+const helpDialog = $("#help-dialog");
+$("#help-toggle").onclick = () => helpDialog.showModal();
+$("#help-close").onclick = () => helpDialog.close();
+helpDialog.onclick = (event) => {
+  if (event.target === helpDialog) helpDialog.close();
+};
+
 function decisionKey(sourceUserId = "") {
   return `${DECISION_KEY_PREFIX}${sourceUserId || "unscoped"}`;
 }

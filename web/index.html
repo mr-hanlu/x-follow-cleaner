@@ -13,6 +13,7 @@
       <a class="brand" href="./"><span aria-hidden="true">🧹</span><strong>关注清理台</strong></a>
       <div class="top-actions">
         <span id="bridge-state" class="pill warning">未连接油猴</span>
+        <button class="help-button" id="help-toggle" title="使用帮助" aria-label="使用帮助">❓</button>
         <a class="button ghost" href="./download/x-follow-cleaner.user.js">安装油猴脚本</a>
         <button class="button ghost" id="sync-userscript">从油猴同步</button>
         <label class="button ghost file-button">导入 CSV<input id="csv-file" type="file" accept=".csv,text/csv" /></label>
@@ -20,6 +21,18 @@
         <button class="button primary" id="send-queue" disabled>发送待取消队列</button>
       </div>
     </header>
+
+    <dialog id="help-dialog" aria-labelledby="help-title">
+      <div class="help-dialog-head"><h2 id="help-title">使用流程</h2><button id="help-close" aria-label="关闭帮助">关闭</button></div>
+      <ol>
+        <li><strong>导出关注列表</strong><span>在 X 页面打开油猴面板，按折叠说明复制 Following cURL 并导出。</span></li>
+        <li><strong>匿名探测公开主页</strong><span>不携带 X 登录 Cookie，获取最近可见活动时间。</span></li>
+        <li><strong>筛选并标记</strong><span>按活跃天数、粉丝数和数据状态筛选，标记保留或待取消。</span></li>
+        <li><strong>发送待取消队列</strong><span>把当前选择同步回油猴；已成功处理的账号不会重复加入。</span></li>
+        <li><strong>返回 X 分批执行</strong><span>设置本批数量和间隔，确认后执行。</span></li>
+      </ol>
+      <p>数据默认保存在当前浏览器。建议定期使用“保存进度 CSV”备份。</p>
+    </dialog>
 
     <main class="workspace">
       <section class="hero">
