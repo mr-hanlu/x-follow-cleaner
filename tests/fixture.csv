@@ -1,0 +1,4 @@
+account_id,screen_name,name,profile_url,is_blue_verified,followers_count,last_post_at,inactive_days,last_post_id,last_post_url,data_status,fetched_at,review_status
+1,active_user,活跃账号,https://x.com/active_user,true,120000,2026-07-30T12:00:00.000Z,1,2000000000000000000,https://x.com/active_user/status/2000000000000000000,ok,2026-07-31T00:00:00.000Z,
+2,stale_user,长期未活跃,https://x.com/stale_user,false,88,2020-01-01T00:00:00.000Z,2400,1210000000000000000,https://x.com/stale_user/status/1210000000000000000,ok,2026-07-31T00:00:00.000Z,
+3,private_user,私密账号,https://x.com/private_user,false,350,,,,,protected,2026-07-31T00:00:00.000Z,

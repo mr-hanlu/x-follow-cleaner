@@ -1,0 +1,189 @@
+(function (app) {
+  const DATASET_KEY = "xfc:dataset:v1";
+  const UNFOLLOW_TEMPLATE_KEY = "xfc:unfollow-template:v1";
+  const UNFOLLOW_QUEUE_KEY = "xfc:unfollow-queue:v1";
+  const SETTINGS_KEY = "xfc:settings:v1";
+  const TWITTER_EPOCH_MS = 1288834974657n;
+
+  app.constants = {
+    DATASET_KEY,
+    UNFOLLOW_TEMPLATE_KEY,
+    UNFOLLOW_QUEUE_KEY,
+    SETTINGS_KEY,
+    TWITTER_EPOCH_MS,
+    columns: [
+      "account_id",
+      "screen_name",
+      "name",
+      "profile_url",
+      "is_blue_verified",
+      "verified_type",
+      "followers_count",
+      "following_count",
+      "protected",
+      "last_post_at",
+      "inactive_days",
+      "last_post_id",
+      "last_post_url",
+      "data_status",
+      "fetched_at",
+      "review_status",
+      "unfollow_status",
+      "unfollowed_at",
+      "unfollow_http_status"
+    ]
+  };
+
+  app.sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  app.nowIso = () => new Date().toISOString();
+
+  app.gmGet = async function (key, fallback) {
+    const value = await Promise.resolve(GM_getValue(key, fallback));
+    return value == null ? fallback : value;
+  };
+
+  app.gmSet = async function (key, value) {
+    await Promise.resolve(GM_setValue(key, value));
+    return value;
+  };
+
+  app.gmDelete = async function (key) {
+    await Promise.resolve(GM_deleteValue(key));
+  };
+
+  app.getCookie = function (name) {
+    const prefix = `${name}=`;
+    for (const part of document.cookie.split("; ")) {
+      if (part.startsWith(prefix)) {
+        return decodeURIComponent(part.slice(prefix.length));
+      }
+    }
+    return "";
+  };
+
+  app.emptyDataset = function () {
+    return {
+      schema_version: "x-follow-cleaner-v1",
+      source_user_id: "",
+      updated_at: app.nowIso(),
+      completed_following: false,
+      accounts: []
+    };
+  };
+
+  app.loadDataset = async function () {
+    const dataset = await app.gmGet(DATASET_KEY, null);
+    if (!dataset || !Array.isArray(dataset.accounts)) return app.emptyDataset();
+    return dataset;
+  };
+
+  app.saveDataset = async function (dataset) {
+    dataset.schema_version = "x-follow-cleaner-v1";
+    dataset.updated_at = app.nowIso();
+    await app.gmSet(DATASET_KEY, dataset);
+    app.emit("dataset", {
+      total: dataset.accounts.length,
+      updated_at: dataset.updated_at
+    });
+    return dataset;
+  };
+
+  app.upsertAccounts = function (dataset, incoming) {
+    const map = new Map(dataset.accounts.map((item) => [String(item.account_id), item]));
+    for (const item of incoming) {
+      const id = String(item.account_id || "");
+      if (!/^\d+$/.test(id)) continue;
+      map.set(id, { ...(map.get(id) || {}), ...item, account_id: id });
+    }
+    dataset.accounts = Array.from(map.values());
+    return dataset;
+  };
+
+  app.inactiveDays = function (isoDate) {
+    if (!isoDate) return null;
+    const value = new Date(isoDate);
+    if (Number.isNaN(value.getTime())) return null;
+    return Math.max(0, Math.floor((Date.now() - value.getTime()) / 86400000));
+  };
+
+  app.snowflakeDate = function (id) {
+    try {
+      const timestamp = (BigInt(id) >> 22n) + TWITTER_EPOCH_MS;
+      const date = new Date(Number(timestamp));
+      if (date.getUTCFullYear() < 2006 || date.getTime() > Date.now() + 172800000) {
+        return null;
+      }
+      return date;
+    } catch {
+      return null;
+    }
+  };
+
+  app.csvCell = function (value) {
+    return `"${String(value ?? "").replaceAll('"', '""')}"`;
+  };
+
+  app.toCSV = function (accounts) {
+    const columns = app.constants.columns;
+    return `\uFEFF${[
+      columns.join(","),
+      ...accounts.map((account) => columns.map((column) => app.csvCell(account[column])).join(","))
+    ].join("\n")}`;
+  };
+
+  app.parseCSV = function (text) {
+    const rows = [];
+    let row = [];
+    let value = "";
+    let quoted = false;
+    const source = String(text || "").replace(/^\uFEFF/, "");
+    for (let index = 0; index < source.length; index += 1) {
+      const character = source[index];
+      const next = source[index + 1];
+      if (character === '"') {
+        if (quoted && next === '"') {
+          value += '"';
+          index += 1;
+        } else {
+          quoted = !quoted;
+        }
+      } else if (character === "," && !quoted) {
+        row.push(value);
+        value = "";
+      } else if ((character === "\n" || character === "\r") && !quoted) {
+        if (character === "\r" && next === "\n") index += 1;
+        row.push(value);
+        if (row.some((cell) => cell !== "")) rows.push(row);
+        row = [];
+        value = "";
+      } else {
+        value += character;
+      }
+    }
+    if (value || row.length) {
+      row.push(value);
+      rows.push(row);
+    }
+    if (rows.length < 2) return [];
+    const headers = rows[0];
+    return rows.slice(1).map((cells) =>
+      Object.fromEntries(headers.map((header, index) => [header, cells[index] ?? ""]))
+    );
+  };
+
+  app.download = function (filename, content, type = "text/plain;charset=utf-8") {
+    const url = URL.createObjectURL(new Blob([content], { type }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  app.events = new EventTarget();
+  app.on = (name, handler) => app.events.addEventListener(name, handler);
+  app.emit = (name, detail) =>
+    app.events.dispatchEvent(new CustomEvent(name, { detail }));
+})(window.XFollowCleaner);
