@@ -9,6 +9,8 @@ const dashboardLog = (level, message, details) => {
 };
 let syncTimer = null;
 let queueTimer = null;
+let syncPending = false;
+let receivedDataset = false;
 const state = {
   accounts: [],
   reviews: loadReviews(""),
@@ -54,6 +56,9 @@ function saveReviews() {
     decisionKey(state.sourceUserId),
     JSON.stringify(state.reviews)
   );
+}
+function hasOwn(object, key) {
+  return Object.prototype.hasOwnProperty.call(object, key);
 }
 function number(value) {
   if (value === "" || value == null) return null;
@@ -110,9 +115,9 @@ function downloadCSV(filename, accounts) {
   const rows = accounts.map((account) =>
     columns.map((column) => csvCell(
       column === "source_user_id"
-        ? state.sourceUserId
-        : column === "review_status"
-          ? (state.reviews[account.account_id] || account.review_status || "")
+          ? state.sourceUserId
+          : column === "review_status"
+          ? reviewOf(account)
           : account[column]
     )).join(",")
   );
@@ -121,7 +126,9 @@ function downloadCSV(filename, accounts) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 function reviewOf(account) {
-  return state.reviews[account.account_id] || account.review_status || "";
+  return hasOwn(state.reviews, account.account_id)
+    ? state.reviews[account.account_id]
+    : (account.review_status || "");
 }
 function statusKind(account) {
   if (!account.fetched_at) return "pending";
@@ -199,8 +206,7 @@ function accountCard(account) {
   [["keep","保留"],["remove","待取消"],["done","已处理"]].forEach(([value,label]) => {
     const button = make("button", `${value}${review === value ? " active" : ""}`, label);
     button.onclick = () => {
-      if (state.reviews[account.account_id] === value) delete state.reviews[account.account_id];
-      else state.reviews[account.account_id] = value;
+      state.reviews[account.account_id] = reviewOf(account) === value ? "" : value;
       state.undo = null; saveReviews(); render();
     };
     decisions.append(button);
@@ -243,7 +249,7 @@ function loadAccounts(accounts, source, sourceUserId = "") {
   }
   state.accounts = normalize(accounts);
   for (const account of state.accounts) {
-    if (["keep","remove","done"].includes(account.review_status) && !state.reviews[account.account_id]) {
+    if (["keep","remove","done"].includes(account.review_status) && !hasOwn(state.reviews, account.account_id)) {
       state.reviews[account.account_id] = account.review_status;
     }
   }
@@ -258,17 +264,44 @@ function bulk(value) {
   const filtered = filteredAccounts();
   const targets = elements.overwrite.checked ? filtered : filtered.filter((account) => !reviewOf(account));
   if (!targets.length || !confirm(`将 ${targets.length} 个筛选结果标记为“${value === "keep" ? "保留" : "待取消"}”？`)) return;
-  state.undo = targets.map((account) => [account.account_id, state.reviews[account.account_id] ?? null]);
+  state.undo = targets.map((account) => ({
+    id: account.account_id,
+    hadOwn: hasOwn(state.reviews, account.account_id),
+    value: state.reviews[account.account_id]
+  }));
   targets.forEach((account) => { state.reviews[account.account_id] = value; });
   saveReviews(); render();
+}
+
+function requestDataset({ automatic = false } = {}) {
+  if (syncPending) return;
+  clearTimeout(syncTimer);
+  syncPending = true;
+  elements.sync.disabled = true;
+  elements.sync.textContent = "同步中…";
+  elements.notice.textContent = automatic
+    ? "正在自动从油猴本地存储同步数据…"
+    : "正在从油猴本地存储读取数据…";
+  dashboardLog("info", automatic ? "页面加载，自动请求油猴数据集。" : "请求油猴数据集。");
+  window.dispatchEvent(new CustomEvent("xfc:request-dataset"));
+  syncTimer = setTimeout(() => {
+    syncPending = false;
+    elements.sync.disabled = false;
+    elements.sync.textContent = "从油猴同步";
+    elements.notice.textContent = "同步超时：请确认油猴脚本已安装、当前版本包含这个正式域名，然后刷新页面重试。";
+    dashboardLog("warn", "等待油猴数据集超时。");
+  }, 5000);
 }
 
 window.addEventListener("xfc:bridge-ready", () => {
   state.bridge = true; elements.bridge.textContent = "油猴已连接"; elements.bridge.className = "pill good";
   dashboardLog("info", "油猴数据桥已连接。");
+  if (!receivedDataset) requestDataset({ automatic: true });
 });
 window.addEventListener("xfc:dataset", (event) => {
   clearTimeout(syncTimer);
+  syncPending = false;
+  receivedDataset = true;
   elements.sync.disabled = false;
   elements.sync.textContent = "从油猴同步";
   dashboardLog("info", "收到油猴数据集。", {
@@ -295,20 +328,7 @@ window.addEventListener("xfc:reviews-error", (event) => {
   elements.notice.textContent = event.detail?.message || "写回失败，请重新同步后重试。";
   dashboardLog("error", "审核标记写回失败。", event.detail);
 });
-elements.sync.onclick = () => {
-  clearTimeout(syncTimer);
-  elements.sync.disabled = true;
-  elements.sync.textContent = "同步中…";
-  elements.notice.textContent = "正在从油猴本地存储读取数据…";
-  dashboardLog("info", "请求油猴数据集。");
-  window.dispatchEvent(new CustomEvent("xfc:request-dataset"));
-  syncTimer = setTimeout(() => {
-    elements.sync.disabled = false;
-    elements.sync.textContent = "从油猴同步";
-    elements.notice.textContent = "同步超时：请确认油猴脚本已安装、当前版本包含这个正式域名，然后刷新页面重试。";
-    dashboardLog("warn", "等待油猴数据集超时。");
-  }, 5000);
-};
+elements.sync.onclick = () => requestDataset();
 elements.file.onchange = async (event) => {
   const file = event.target.files?.[0]; if (!file) return;
   const rows = parseCSV(await file.text());
@@ -338,11 +358,18 @@ $("#bulk-keep").onclick = () => bulk("keep"); $("#bulk-remove").onclick = () => 
 $("#bulk-clear").onclick = () => {
   const targets = filteredAccounts().filter((account) => reviewOf(account));
   if (!targets.length || !confirm(`清空 ${targets.length} 个筛选结果的标记？`)) return;
-  state.undo = targets.map((account) => [account.account_id, state.reviews[account.account_id] ?? null]);
-  targets.forEach((account) => { delete state.reviews[account.account_id]; }); saveReviews(); render();
+  state.undo = targets.map((account) => ({
+    id: account.account_id,
+    hadOwn: hasOwn(state.reviews, account.account_id),
+    value: state.reviews[account.account_id]
+  }));
+  targets.forEach((account) => { state.reviews[account.account_id] = ""; }); saveReviews(); render();
 };
 elements.undo.onclick = () => {
-  for (const [id, value] of state.undo || []) { if (value == null) delete state.reviews[id]; else state.reviews[id] = value; }
+  for (const item of state.undo || []) {
+    if (item.hadOwn) state.reviews[item.id] = item.value;
+    else delete state.reviews[item.id];
+  }
   state.undo = null; saveReviews(); render();
 };
 $("#reset-filters").onclick = () => {
@@ -360,4 +387,4 @@ elements.previous.onclick = () => { state.page -= 1; render(); $(".results").scr
 elements.next.onclick = () => { state.page += 1; render(); $(".results").scrollIntoView({ behavior: "smooth" }); };
 
 render();
-window.dispatchEvent(new CustomEvent("xfc:request-dataset"));
+queueMicrotask(() => requestDataset({ automatic: true }));

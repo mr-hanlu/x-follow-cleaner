@@ -18,10 +18,16 @@ assert.match(bundle, /@updateURL\s+https:\/\/clean\.example\.com\/download\/x-fo
 assert.match(bundle, /anonymous:\s*true/);
 assert.match(bundle, /id="xfc-probe-concurrency"/);
 assert.match(bundle, /id="xfc-refresh-queue"/);
+assert.match(bundle, /id="xfc-auto-destroy"/);
+assert.match(bundle, /overscroll-behavior:contain/);
+assert.match(bundle, /清空当前账号数据/);
 assert.match(bundle, /GM_addValueChangeListener/);
 assert.doesNotMatch(bundle, /__DASHBOARD_MATCH__/);
 assert.doesNotMatch(bundle, /__DASHBOARD_(URL|ICON)__/);
 assert.doesNotMatch(bundle, /__USERSCRIPT_URL__/);
+const dashboardSource = fs.readFileSync(path.join(root, "web", "dashboard.js"), "utf8");
+assert.match(dashboardSource, /queueMicrotask\(\(\) => requestDataset/);
+assert.match(dashboardSource, /state\.reviews\[account\.account_id\] = reviewOf\(account\) === value \? "" : value/);
 
 const core = fs.readFileSync(path.join(root, "src", "core.js"), "utf8");
 const gmStorage = new Map();
@@ -110,4 +116,29 @@ await profileApp.profileProbe.start(
 );
 assert.equal(maxActiveRequests, 3);
 assert.ok(profileDataset.accounts.every((account) => account.data_status === "http_404"));
+
+const unfollowSource = fs.readFileSync(path.join(root, "src", "unfollow.js"), "utf8");
+let savedAutomaticTemplate = null;
+const unfollowApp = {
+  nowIso: () => "2026-07-31T00:00:00.000Z",
+  saveUnfollowTemplate: async (template) => { savedAutomaticTemplate = template; },
+  parseCurl: () => { throw new Error("not used"); }
+};
+const unfollowContext = {
+  window: { XFollowCleaner: unfollowApp },
+  document: { documentElement: { lang: "zh-CN" } },
+  URL,
+  URLSearchParams
+};
+vm.runInNewContext(unfollowSource, unfollowContext);
+const automaticTemplate = unfollowApp.unfollow.createAutomaticTemplate();
+assert.equal(automaticTemplate.url, "https://x.com/i/api/1.1/friendships/destroy.json");
+assert.equal(automaticTemplate.source, "automatic");
+assert.equal(automaticTemplate.params.skip_status, "1");
+assert.ok(automaticTemplate.headers.authorization.startsWith("Bearer "));
+assert.ok(!("user_id" in automaticTemplate.params));
+assert.ok(!("cookie" in automaticTemplate.headers));
+assert.ok(!("x-csrf-token" in automaticTemplate.headers));
+await unfollowApp.unfollow.saveAutomaticTemplate();
+assert.equal(savedAutomaticTemplate.source, "automatic");
 console.log("All tests passed.");

@@ -1,18 +1,21 @@
 (function (app) {
   const styles = `
     #xfc-launch{position:fixed;right:18px;bottom:18px;z-index:2147483646;border:0;border-radius:999px;padding:11px 16px;background:#0f1419;color:#fff;font:700 13px system-ui;box-shadow:0 10px 35px #0004;cursor:pointer}
-    #xfc-panel{position:fixed;right:18px;bottom:70px;z-index:2147483647;width:min(430px,calc(100vw - 28px));max-height:78vh;overflow:auto;border:1px solid #cfd9de;border-radius:18px;background:#fff;color:#0f1419;box-shadow:0 24px 80px #0005;font:13px/1.45 system-ui}
+    #xfc-panel{position:fixed;right:18px;bottom:70px;z-index:2147483647;width:min(430px,calc(100vw - 28px));max-height:78vh;overflow:auto;overscroll-behavior:contain;border:1px solid #cfd9de;border-radius:18px;background:#fff;color:#0f1419;box-shadow:0 24px 80px #0005;font:13px/1.45 system-ui}
     #xfc-panel[hidden]{display:none}#xfc-panel header{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:15px 17px;background:#fff;border-bottom:1px solid #eff3f4}
+    #xfc-panel .xfc-header-actions{display:flex;align-items:center;gap:7px}
     #xfc-panel h2,#xfc-panel p{margin:0}#xfc-panel h2{font-size:17px}#xfc-panel main{padding:14px 17px 18px}#xfc-panel section{padding:13px 0;border-bottom:1px solid #eff3f4}
     #xfc-panel section:last-child{border:0}#xfc-panel h3{margin:0 0 9px;font-size:13px}#xfc-panel textarea{width:100%;height:90px;box-sizing:border-box;padding:9px;border:1px solid #cfd9de;border-radius:9px;font:11px/1.4 ui-monospace,monospace;resize:vertical}
     #xfc-panel .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}#xfc-panel button,#xfc-panel a.xfc-btn{border:1px solid #cfd9de;border-radius:999px;padding:7px 11px;background:#fff;color:#0f1419;text-decoration:none;font:700 12px system-ui;cursor:pointer}
     #xfc-panel button.primary{background:#0f1419;color:#fff;border-color:#0f1419}#xfc-panel button.danger{background:#b42318;color:#fff;border-color:#b42318}
+    #xfc-panel button.xfc-clear-danger{background:#fff0ee;color:#b42318;border-color:#f2a49d}
     #xfc-panel button:disabled{cursor:wait;opacity:.55}
     #xfc-panel label{display:flex;flex-direction:column;gap:4px;color:#536471;font-size:11px}#xfc-panel input{width:92px;padding:6px 8px;border:1px solid #cfd9de;border-radius:8px}#xfc-panel input[type=checkbox]{width:auto;padding:0}
     #xfc-account-summary{margin-bottom:5px;padding:9px;border-radius:9px;background:#fff8dc;color:#655016;font-size:10px}
     .xfc-progress{margin-top:9px}.xfc-progress-track{height:7px;overflow:hidden;border-radius:999px;background:#eff3f4}.xfc-progress-bar{display:block;width:0;height:100%;border-radius:inherit;background:#1d9bf0;transition:width .2s ease}.xfc-progress.active.indeterminate .xfc-progress-bar{width:36%;animation:xfc-slide 1.15s ease-in-out infinite}.xfc-progress.complete .xfc-progress-bar{width:100%;background:#2e7d53}.xfc-progress.error .xfc-progress-bar{width:100%;background:#b42318}.xfc-progress.stopped .xfc-progress-bar{background:#b7791f}.xfc-progress small{display:block;margin-top:5px;color:#536471;font-size:10px}
     @keyframes xfc-slide{from{transform:translateX(-110%)}to{transform:translateX(300%)}}
     .xfc-queue-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:9px 0 6px}.xfc-queue-head strong{font-size:11px}.xfc-queue-list{height:118px!important;background:#f7f9f9!important;color:#536471!important}.xfc-queue-list[hidden]{display:none}
+    #xfc-panel details{margin-top:10px;padding:9px;border:1px solid #eff3f4;border-radius:10px;background:#f7f9f9}#xfc-panel summary{cursor:pointer;color:#536471;font-size:11px}#xfc-panel .xfc-template-note{margin-top:8px;color:#2e7d53;font-size:11px}
     #xfc-log{max-height:150px;min-height:50px;overflow:auto;margin-top:10px;padding:9px;border-radius:9px;background:#f7f9f9;color:#536471;font:10px/1.55 ui-monospace,monospace;white-space:pre-wrap}
   `;
 
@@ -31,7 +34,13 @@
       document.body.insertAdjacentHTML("beforeend", `
         <button id="xfc-launch" type="button">关注清理助手</button>
         <aside id="xfc-panel" hidden>
-          <header><h2>关注清理助手</h2><button id="xfc-close">关闭</button></header>
+          <header>
+            <h2>关注清理助手</h2>
+            <div class="xfc-header-actions">
+              <button class="xfc-clear-danger" id="xfc-clear-data">清空当前账号数据</button>
+              <button id="xfc-close">关闭</button>
+            </div>
+          </header>
           <main>
             <div id="xfc-account-summary">正在读取本地进度…</div>
             <section>
@@ -53,14 +62,18 @@
             </section>
             <section>
               <h3>3. 筛选与导出</h3>
-              <div class="row"><a class="xfc-btn" id="xfc-dashboard" target="_blank" rel="noreferrer">打开筛选页面</a><button id="xfc-export">导出当前 CSV</button><button id="xfc-clear-data">清空本地数据</button></div>
+              <div class="row"><a class="xfc-btn" id="xfc-dashboard" target="_blank" rel="noreferrer">打开筛选页面</a><button id="xfc-export">导出当前 CSV</button></div>
             </section>
             <section>
               <h3>4. 分批取消关注（登录态）</h3>
               <div class="xfc-queue-head"><strong id="xfc-queue-summary">队列尚未读取</strong><button id="xfc-refresh-queue">刷新队列</button></div>
               <textarea class="xfc-queue-list" id="xfc-queue-list" readonly hidden placeholder="静态页面发送的待取消账号会显示在这里"></textarea>
-              <textarea id="xfc-destroy-curl" placeholder="粘贴 friendships/destroy.json 的 Copy as cURL (bash)"></textarea>
-              <div class="row"><button id="xfc-save-destroy">保存请求模板</button></div>
+              <p class="xfc-template-note">取消请求模板会自动生成，通常不需要复制第二个 cURL。</p>
+              <details>
+                <summary>高级兜底：接口变化时粘贴 destroy.json cURL</summary>
+                <textarea id="xfc-destroy-curl" placeholder="仅在自动模板失效时，粘贴 friendships/destroy.json 的 Copy as cURL (bash)"></textarea>
+                <div class="row"><button id="xfc-save-destroy">保存兜底模板</button><button id="xfc-auto-destroy">恢复自动模板</button></div>
+              </details>
               <div class="row">
                 <label>本批数量<input id="xfc-batch-size" type="number" min="1" max="50" value="10"></label>
                 <label>间隔（秒）<input id="xfc-unfollow-delay" type="number" min="1" value="5"></label>
@@ -83,6 +96,22 @@
       };
       const log = (value, level = "info", scope = "UI") => {
         app.log(level, scope, value);
+      };
+      let savedPageOverflow = null;
+      const lockPageScroll = () => {
+        if (savedPageOverflow) return;
+        savedPageOverflow = {
+          html: document.documentElement.style.overflow,
+          body: document.body.style.overflow
+        };
+        document.documentElement.style.overflow = "hidden";
+        document.body.style.overflow = "hidden";
+      };
+      const unlockPageScroll = () => {
+        if (!savedPageOverflow) return;
+        document.documentElement.style.overflow = savedPageOverflow.html;
+        document.body.style.overflow = savedPageOverflow.body;
+        savedPageOverflow = null;
       };
       const setProgress = (id, update = {}) => {
         const root = el(id);
@@ -194,11 +223,22 @@
         await refreshQueue(false);
       };
       app.on("log", (event) => showLog(event.detail));
-      el("xfc-launch").onclick = () => {
-        el("xfc-panel").hidden = !el("xfc-panel").hidden;
-        if (!el("xfc-panel").hidden) restoreState();
+      this.open = () => {
+        el("xfc-panel").hidden = false;
+        lockPageScroll();
+        restoreState();
       };
-      el("xfc-close").onclick = () => { el("xfc-panel").hidden = true; };
+      this.close = () => {
+        el("xfc-panel").hidden = true;
+        unlockPageScroll();
+      };
+      el("xfc-panel").addEventListener("wheel", (event) => event.stopPropagation(), { passive: true });
+      el("xfc-panel").addEventListener("touchmove", (event) => event.stopPropagation(), { passive: true });
+      el("xfc-launch").onclick = () => {
+        if (el("xfc-panel").hidden) this.open();
+        else this.close();
+      };
+      el("xfc-close").onclick = () => this.close();
       el("xfc-following-start").onclick = async () => {
         setBusy("xfc-following-start", true, "正在导出…", "开始 / 继续导出");
         try {
@@ -258,10 +298,14 @@
         log(`已导出 CSV，共 ${dataset.accounts.length} 行。`);
       };
       el("xfc-clear-data").onclick = async () => {
-        if (!confirm("确认清空关注列表、探测结果和取消队列？请先导出 CSV 备份。")) return;
+        const sourceUserId = await app.getActiveSourceId();
+        if (!confirm(
+          `确认清空当前账号 ${sourceUserId || "未知"} 的关注列表、探测结果和取消队列？\n\n其他账号的数据不会被清空。`
+        )) return;
+        if (!confirm("最后确认：清空后只能通过 CSV 或重新导出恢复。确定继续吗？")) return;
         await app.clearActiveData();
         await restoreState();
-        log("本地关注数据和取消队列已清空。", "warn");
+        log(`账号 ${sourceUserId || "未知"} 的本地关注数据和取消队列已清空。`, "warn");
       };
       el("xfc-refresh-queue").onclick = () => refreshQueue(true);
       el("xfc-save-destroy").onclick = async () => {
@@ -270,6 +314,11 @@
           el("xfc-destroy-curl").value = "";
           log("destroy.json 请求模板已保存，不保存 Cookie 和 ct0。");
         } catch (error) { log(error.message || String(error), "error", "Unfollow"); }
+      };
+      el("xfc-auto-destroy").onclick = async () => {
+        await app.unfollow.saveAutomaticTemplate();
+        el("xfc-destroy-curl").value = "";
+        log("已恢复自动生成的 destroy.json 请求模板。", "info", "Unfollow");
       };
       el("xfc-unfollow-start").onclick = async () => {
         const size = Number(el("xfc-batch-size").value);

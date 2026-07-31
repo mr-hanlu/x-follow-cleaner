@@ -1,4 +1,38 @@
 (function (app) {
+  const WEB_BEARER_TOKEN =
+    "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA";
+  const DEFAULT_PARAMS = {
+    include_profile_interstitial_type: "1",
+    include_blocking: "1",
+    include_blocked_by: "1",
+    include_followed_by: "1",
+    include_want_retweets: "1",
+    include_mute_edge: "1",
+    include_can_dm: "1",
+    include_can_media_tag: "1",
+    include_ext_is_blue_verified: "1",
+    include_ext_verified_type: "1",
+    include_ext_profile_image_shape: "1",
+    skip_status: "1"
+  };
+
+  function automaticTemplate() {
+    return {
+      url: "https://x.com/i/api/1.1/friendships/destroy.json",
+      headers: {
+        accept: "*/*",
+        authorization: `Bearer ${WEB_BEARER_TOKEN}`,
+        "content-type": "application/x-www-form-urlencoded",
+        "x-twitter-active-user": "yes",
+        "x-twitter-auth-type": "OAuth2Session",
+        "x-twitter-client-language": document.documentElement.lang || "zh-cn"
+      },
+      params: { ...DEFAULT_PARAMS },
+      source: "automatic",
+      saved_at: app.nowIso()
+    };
+  }
+
   function sanitizedTemplate(curlText) {
     const parsed = app.parseCurl(curlText);
     if (parsed.url.pathname !== "/i/api/1.1/friendships/destroy.json") {
@@ -36,6 +70,16 @@
       return template;
     },
 
+    createAutomaticTemplate() {
+      return automaticTemplate();
+    },
+
+    async saveAutomaticTemplate() {
+      const template = automaticTemplate();
+      await app.saveUnfollowTemplate(template);
+      return template;
+    },
+
     async queueAccounts(accounts) {
       const dataset = await app.loadDataset();
       const sourceUserId = String(dataset.source_user_id || "");
@@ -66,8 +110,14 @@
       const dataset = await app.loadDataset();
       const sourceUserId = String(dataset.source_user_id || "");
       if (!sourceUserId) throw new Error("没有活动账号，请先导出当前账号的关注列表。");
-      const template = await app.loadUnfollowTemplate(sourceUserId);
-      if (!template) throw new Error("请先为当前账号粘贴并保存 destroy.json cURL。");
+      let template = await app.loadUnfollowTemplate(sourceUserId);
+      if (!template) {
+        template = automaticTemplate();
+        await app.saveUnfollowTemplate(template, sourceUserId);
+        app.log("info", "Unfollow", "已自动生成 destroy.json 请求模板。", {
+          source_user_id: sourceUserId
+        });
+      }
       const loggedAccountId = app.getLoggedAccountId();
       if (loggedAccountId && loggedAccountId !== sourceUserId) {
         throw new Error(
