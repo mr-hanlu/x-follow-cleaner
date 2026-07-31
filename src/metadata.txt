@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X 关注清理助手
 // @namespace    https://github.com/local/x-follow-cleaner
-// @version      0.5.0
+// @version      0.6.0
 // @description  导出关注列表、匿名探测公开主页活跃时间，并按确认队列分批取消关注。
 // @author       Mr Hanlu
 // @match        https://x.com/*

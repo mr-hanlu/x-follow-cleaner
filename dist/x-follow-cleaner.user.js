@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X 关注清理助手
 // @namespace    https://github.com/local/x-follow-cleaner
-// @version      0.5.0
+// @version      0.6.0
 // @description  导出关注列表、匿名探测公开主页活跃时间，并按确认队列分批取消关注。
 // @author       Mr Hanlu
 // @match        https://x.com/*
@@ -1006,21 +1006,49 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
       const sourceUserId = String(dataset.source_user_id || "");
       if (!sourceUserId) throw new Error("没有活动账号，无法建立取消队列。");
       const known = new Map(dataset.accounts.map((account) => [String(account.account_id), account]));
+      const previousQueue = await app.loadUnfollowQueue(sourceUserId);
+      const previous = new Map(previousQueue.map((item) => [String(item.account_id), item]));
       const queue = [];
+      let ignoredProcessed = 0;
+      let ignoredUnknown = 0;
       for (const value of accounts) {
         const id = String(value.account_id || value || "");
-        if (!/^\d+$/.test(id) || !known.has(id)) continue;
+        if (!/^\d+$/.test(id) || !known.has(id)) {
+          ignoredUnknown += 1;
+          continue;
+        }
         const account = known.get(id);
+        const processed =
+          account.unfollow_status === "success" ||
+          Boolean(account.unfollowed_at);
+        if (processed) {
+          account.review_status = "done";
+          ignoredProcessed += 1;
+          continue;
+        }
         account.review_status = "remove";
+        const previousStatus = previous.get(id)?.status;
         queue.push({
           account_id: id,
           screen_name: account.screen_name,
-          status: account.unfollow_status === "success" ? "success" : "pending"
+          status: previousStatus === "failed" ? "failed" : "pending"
         });
       }
       await app.saveDataset(dataset);
       await app.saveUnfollowQueue(queue, sourceUserId);
-      return queue;
+      return {
+        queue,
+        stats: {
+          selected: accounts.length,
+          queued: queue.length,
+          failed: queue.filter((item) => item.status === "failed").length,
+          ignored_processed: ignoredProcessed,
+          ignored_unknown: ignoredUnknown,
+          removed_from_previous: previousQueue.filter((item) =>
+            !queue.some((queued) => queued.account_id === item.account_id)
+          ).length
+        }
+      };
     },
 
     async start(options = {}, onProgress = () => {}) {
@@ -1058,6 +1086,7 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
       const map = new Map(dataset.accounts.map((account) => [String(account.account_id), account]));
       this.running = true;
       this.stopRequested = false;
+      let batchSucceeded = 0;
       onProgress({
         phase: "start",
         message: `取消关注任务准备完成，本批 ${targets.length} 人`,
@@ -1106,13 +1135,20 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
           } catch (error) {
             if (String(error.message || error).includes("429")) throw error;
           }
-          const queueItem = queue.find((item) => item.account_id === target.account_id);
-          if (queueItem) queueItem.status = status;
+          const latestQueue = await app.loadUnfollowQueue(sourceUserId);
+          if (status === "success") {
+            queue = latestQueue.filter((item) => item.account_id !== target.account_id);
+          } else {
+            queue = latestQueue;
+            const queueItem = queue.find((item) => item.account_id === target.account_id);
+            if (queueItem) queueItem.status = status;
+          }
           const account = map.get(target.account_id);
           if (account) {
             account.unfollow_status = status;
             account.unfollow_http_status = httpStatus || "";
             if (status === "success") {
+              batchSucceeded += 1;
               account.unfollowed_at = app.nowIso();
               account.review_status = "done";
             }
@@ -1133,17 +1169,14 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
           if (index + 1 < targets.length) await app.sleep(intervalMs);
         }
         if (this.stopRequested) {
-          const completed = targets.filter((target) =>
-            queue.find((item) => item.account_id === target.account_id)?.status === "success"
-          ).length;
           onProgress({
             phase: "stopped",
-            message: `已安全停止；本批成功 ${completed}/${targets.length}`,
-            current: completed,
+            message: `已安全停止；本批成功 ${batchSucceeded}/${targets.length}`,
+            current: batchSucceeded,
             total: targets.length
           });
           app.log("warn", "Unfollow", "用户请求停止", {
-            completed,
+            completed: batchSucceeded,
             total: targets.length
           });
         }
@@ -1169,11 +1202,13 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
     install() {
       if (location.hostname === "x.com") return;
 
-      window.addEventListener("xfc:request-dataset", async () => {
+      const sendDataset = async () => {
         const dataset = await app.loadDataset();
+        const queue = await app.loadUnfollowQueue(dataset.source_user_id);
         app.log("info", "Bridge", "向筛选页面发送数据集", {
           accounts: dataset.accounts.length,
-          updated_at: dataset.updated_at
+          updated_at: dataset.updated_at,
+          queued: queue.length
         });
         window.dispatchEvent(
           new CustomEvent("xfc:dataset", {
@@ -1181,11 +1216,14 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
               schema_version: dataset.schema_version,
               source_user_id: dataset.source_user_id,
               updated_at: dataset.updated_at,
-              accounts: dataset.accounts
+              accounts: dataset.accounts,
+              queue
             }
           })
         );
-      });
+      };
+
+      window.addEventListener("xfc:request-dataset", sendDataset);
 
       window.addEventListener("xfc:save-reviews", async (event) => {
         const reviews = Array.isArray(event.detail?.reviews) ? event.detail.reviews : [];
@@ -1211,21 +1249,29 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
           const id = String(review.account_id || "");
           const status = String(review.review_status || "");
           if (!map.has(id) || !["", "keep", "remove", "done"].includes(status)) continue;
-          map.get(id).review_status = status;
+          const account = map.get(id);
+          account.review_status =
+            account.unfollow_status === "success" || account.unfollowed_at
+              ? "done"
+              : status;
         }
         await app.saveDataset(dataset);
-        const queue = await app.unfollow.queueAccounts(
-          dataset.accounts.filter((account) => account.review_status === "remove")
-        );
+        const removeIds = Array.isArray(event.detail?.remove_ids)
+          ? event.detail.remove_ids
+          : dataset.accounts
+              .filter((account) => account.review_status === "remove")
+              .map((account) => account.account_id);
+        const result = await app.unfollow.queueAccounts(removeIds);
         app.log("info", "Bridge", "审核标记已写回", {
           reviews: reviews.length,
-          queued: queue.filter((item) => item.status !== "success").length
+          ...result.stats
         });
         window.dispatchEvent(
           new CustomEvent("xfc:reviews-saved", {
-            detail: { saved: reviews.length, queued: queue.filter((item) => item.status !== "success").length }
+            detail: { saved: reviews.length, ...result.stats }
           })
         );
+        await sendDataset();
       });
 
       window.dispatchEvent(new CustomEvent("xfc:bridge-ready"));
@@ -1295,6 +1341,7 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
                 <label>本次最多<input id="xfc-probe-limit" type="number" min="0" value="50"></label>
                 <label>间隔（秒）<input id="xfc-probe-delay" type="number" min="1" value="3"></label>
                 <label>并发数<input id="xfc-probe-concurrency" type="number" min="1" max="8" value="2"></label>
+                <label><span>数量</span><span><input id="xfc-probe-all" type="checkbox">处理全部剩余</span></label>
                 <label><span>范围</span><span><input id="xfc-retry-failed" type="checkbox">重试全部异常</span></label>
               </div>
               <div class="row"><button class="primary" id="xfc-probe-start">开始探测</button><button id="xfc-stop">安全停止</button></div>
@@ -1337,22 +1384,6 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
       const log = (value, level = "info", scope = "UI") => {
         app.log(level, scope, value);
       };
-      let savedPageOverflow = null;
-      const lockPageScroll = () => {
-        if (savedPageOverflow) return;
-        savedPageOverflow = {
-          html: document.documentElement.style.overflow,
-          body: document.body.style.overflow
-        };
-        document.documentElement.style.overflow = "hidden";
-        document.body.style.overflow = "hidden";
-      };
-      const unlockPageScroll = () => {
-        if (!savedPageOverflow) return;
-        document.documentElement.style.overflow = savedPageOverflow.html;
-        document.body.style.overflow = savedPageOverflow.body;
-        savedPageOverflow = null;
-      };
       const setProgress = (id, update = {}) => {
         const root = el(id);
         const phase = update.phase || "progress";
@@ -1376,11 +1407,14 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
       const refreshQueue = async (writeLog = true) => {
         const sourceUserId = await app.getActiveSourceId();
         const queue = await app.loadUnfollowQueue(sourceUserId);
-        const pending = queue.filter((item) => item.status !== "success");
-        const success = queue.filter((item) => item.status === "success").length;
+        const dataset = await app.loadDataset(sourceUserId);
+        const pending = queue;
+        const success = dataset.accounts.filter((account) =>
+          account.unfollow_status === "success" || account.unfollowed_at
+        ).length;
         const failed = queue.filter((item) => item.status === "failed").length;
         el("xfc-queue-summary").textContent =
-          `队列 ${queue.length} 人 · 待处理 ${pending.length} · 已成功 ${success}` +
+          `活动队列 ${pending.length} 人 · 历史成功 ${success}` +
           (failed ? ` · 失败待重试 ${failed}` : "");
         const list = el("xfc-queue-list");
         list.hidden = pending.length === 0;
@@ -1391,7 +1425,7 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
           )
           .join("\n");
         if (writeLog) {
-          log(`取消队列已刷新：总计 ${queue.length}，待处理 ${pending.length}，已成功 ${success}。`, "info", "Unfollow");
+          log(`取消队列已刷新：待处理 ${pending.length}，历史成功 ${success}。`, "info", "Unfollow");
         }
         if (
           sourceUserId &&
@@ -1404,12 +1438,10 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
         }
         if (queue.length) {
           setProgress("xfc-unfollow-progress", {
-            phase: pending.length ? "stopped" : "complete",
-            message: pending.length
-              ? `取消队列待处理 ${pending.length}/${queue.length}`
-              : `取消队列已完成 ${queue.length}/${queue.length}`,
-            current: success,
-            total: queue.length
+            phase: "stopped",
+            message: `活动取消队列待处理 ${pending.length} 人 · 历史成功 ${success}`,
+            current: 0,
+            total: pending.length
           });
         } else {
           el("xfc-unfollow-progress").hidden = true;
@@ -1465,15 +1497,36 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
       app.on("log", (event) => showLog(event.detail));
       this.open = () => {
         el("xfc-panel").hidden = false;
-        lockPageScroll();
         restoreState();
       };
       this.close = () => {
         el("xfc-panel").hidden = true;
-        unlockPageScroll();
       };
-      el("xfc-panel").addEventListener("wheel", (event) => event.stopPropagation(), { passive: true });
-      el("xfc-panel").addEventListener("touchmove", (event) => event.stopPropagation(), { passive: true });
+      const panel = el("xfc-panel");
+      panel.addEventListener("wheel", (event) => {
+        const atTop = panel.scrollTop <= 0;
+        const atBottom = Math.ceil(panel.scrollTop + panel.clientHeight) >= panel.scrollHeight;
+        if ((event.deltaY < 0 && atTop) || (event.deltaY > 0 && atBottom)) {
+          event.preventDefault();
+        }
+        event.stopPropagation();
+      }, { passive: false });
+      let lastTouchY = null;
+      panel.addEventListener("touchstart", (event) => {
+        lastTouchY = event.touches[0]?.clientY ?? null;
+      }, { passive: true });
+      panel.addEventListener("touchmove", (event) => {
+        const currentY = event.touches[0]?.clientY;
+        if (lastTouchY == null || currentY == null) return;
+        const deltaY = lastTouchY - currentY;
+        lastTouchY = currentY;
+        const atTop = panel.scrollTop <= 0;
+        const atBottom = Math.ceil(panel.scrollTop + panel.clientHeight) >= panel.scrollHeight;
+        if ((deltaY < 0 && atTop) || (deltaY > 0 && atBottom)) {
+          event.preventDefault();
+        }
+        event.stopPropagation();
+      }, { passive: false });
       el("xfc-launch").onclick = () => {
         if (el("xfc-panel").hidden) this.open();
         else this.close();
@@ -1507,7 +1560,7 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
         setBusy("xfc-probe-start", true, "正在探测…", "开始探测");
         try {
           const dataset = await app.profileProbe.start({
-            limit: Number(el("xfc-probe-limit").value),
+            limit: el("xfc-probe-all").checked ? 0 : Number(el("xfc-probe-limit").value),
             intervalMs: Number(el("xfc-probe-delay").value) * 1000,
             concurrency: Number(el("xfc-probe-concurrency").value),
             retryFailed: el("xfc-retry-failed").checked
@@ -1525,6 +1578,9 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
           setBusy("xfc-probe-start", false, "", "开始探测");
           await restoreState();
         }
+      };
+      el("xfc-probe-all").onchange = () => {
+        el("xfc-probe-limit").disabled = el("xfc-probe-all").checked;
       };
       el("xfc-stop").onclick = () => {
         app.following.stop();

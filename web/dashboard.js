@@ -2,6 +2,7 @@
 
 const LEGACY_DECISION_KEY = "xfc-dashboard-reviews-v1";
 const DECISION_KEY_PREFIX = "xfc-dashboard-reviews-v2:";
+const REVIEW_STATE_KEY_PREFIX = "xfc-dashboard-review-state-v3:";
 const dashboardLog = (level, message, details) => {
   const method = ["info", "warn", "error"].includes(level) ? level : "log";
   if (details === undefined) console[method](`[XFC Dashboard] ${message}`);
@@ -11,9 +12,12 @@ let syncTimer = null;
 let queueTimer = null;
 let syncPending = false;
 let receivedDataset = false;
+const initialReviewState = loadReviewState("");
 const state = {
   accounts: [],
-  reviews: loadReviews(""),
+  reviews: initialReviewState.reviews,
+  dirty: initialReviewState.dirty,
+  remoteQueue: [],
   sourceUserId: "",
   page: 1,
   pageSize: 50,
@@ -40,21 +44,35 @@ const elements = {
 function decisionKey(sourceUserId = "") {
   return `${DECISION_KEY_PREFIX}${sourceUserId || "unscoped"}`;
 }
-function loadReviews(sourceUserId = "") {
+function reviewStateKey(sourceUserId = "") {
+  return `${REVIEW_STATE_KEY_PREFIX}${sourceUserId || "unscoped"}`;
+}
+function loadReviewState(sourceUserId = "") {
   try {
-    const isolated = localStorage.getItem(decisionKey(sourceUserId));
-    if (isolated) return JSON.parse(isolated);
-    if (!sourceUserId) {
-      return JSON.parse(localStorage.getItem(LEGACY_DECISION_KEY) || "{}");
+    const current = JSON.parse(localStorage.getItem(reviewStateKey(sourceUserId)) || "null");
+    if (current && current.reviews && Array.isArray(current.dirty)) {
+      return {
+        reviews: current.reviews,
+        dirty: new Set(current.dirty)
+      };
     }
-    return {};
+    const isolated = localStorage.getItem(decisionKey(sourceUserId));
+    if (isolated) {
+      const reviews = JSON.parse(isolated);
+      return { reviews, dirty: new Set(Object.keys(reviews)) };
+    }
+    if (!sourceUserId) {
+      const reviews = JSON.parse(localStorage.getItem(LEGACY_DECISION_KEY) || "{}");
+      return { reviews, dirty: new Set(Object.keys(reviews)) };
+    }
+    return { reviews: {}, dirty: new Set() };
   }
-  catch { return {}; }
+  catch { return { reviews: {}, dirty: new Set() }; }
 }
 function saveReviews() {
   localStorage.setItem(
-    decisionKey(state.sourceUserId),
-    JSON.stringify(state.reviews)
+    reviewStateKey(state.sourceUserId),
+    JSON.stringify({ reviews: state.reviews, dirty: Array.from(state.dirty) })
   );
 }
 function hasOwn(object, key) {
@@ -126,8 +144,9 @@ function downloadCSV(filename, accounts) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 function reviewOf(account) {
-  return hasOwn(state.reviews, account.account_id)
-    ? state.reviews[account.account_id]
+  if (account.unfollow_status === "success" || account.unfollowed_at) return "done";
+  return state.dirty.has(account.account_id)
+    ? (state.reviews[account.account_id] || "")
     : (account.review_status || "");
 }
 function statusKind(account) {
@@ -205,8 +224,12 @@ function accountCard(account) {
   const decisions = make("div", "decisions");
   [["keep","保留"],["remove","待取消"],["done","已处理"]].forEach(([value,label]) => {
     const button = make("button", `${value}${review === value ? " active" : ""}`, label);
+    const processed = account.unfollow_status === "success" || Boolean(account.unfollowed_at);
+    button.disabled = processed;
+    if (processed) button.title = "该账号已成功取消关注，处理历史已锁定";
     button.onclick = () => {
       state.reviews[account.account_id] = reviewOf(account) === value ? "" : value;
+      state.dirty.add(account.account_id);
       state.undo = null; saveReviews(); render();
     };
     decisions.append(button);
@@ -234,8 +257,13 @@ function render() {
   elements.pagination.hidden = !filtered.length;
   elements.pageLabel.textContent = `第 ${state.page} / ${pages} 页 · 本页 ${rows.length} 个`;
   elements.previous.disabled = state.page <= 1; elements.next.disabled = state.page >= pages;
-  elements.save.disabled = !state.accounts.length; elements.send.disabled = !removes;
+  elements.save.disabled = !state.accounts.length;
+  elements.send.disabled = !state.bridge || !state.accounts.length;
+  elements.send.textContent = state.dirty.size
+    ? `发送待取消队列 · ${state.dirty.size} 项未同步`
+    : "发送待取消队列";
   elements.undo.disabled = !state.undo;
+  updateQuickFilters();
   if (!rows.length) {
     elements.empty.firstElementChild.textContent = state.accounts.length ? "没有符合当前条件的账号" : "尚未载入账号数据";
     elements.empty.lastElementChild.textContent = state.accounts.length ? "请放宽或重置筛选条件。" : "从油猴同步或导入 CSV 后即可开始。";
@@ -245,14 +273,11 @@ function loadAccounts(accounts, source, sourceUserId = "") {
   const normalizedSource = String(sourceUserId || accounts[0]?.source_user_id || "");
   if (normalizedSource !== state.sourceUserId) {
     state.sourceUserId = normalizedSource;
-    state.reviews = loadReviews(normalizedSource);
+    const reviewState = loadReviewState(normalizedSource);
+    state.reviews = reviewState.reviews;
+    state.dirty = reviewState.dirty;
   }
   state.accounts = normalize(accounts);
-  for (const account of state.accounts) {
-    if (["keep","remove","done"].includes(account.review_status) && !hasOwn(state.reviews, account.account_id)) {
-      state.reviews[account.account_id] = account.review_status;
-    }
-  }
   saveReviews(); state.source = source; state.page = 1;
   elements.notice.textContent =
     `已载入 ${state.accounts.length.toLocaleString("zh-CN")} 个账号，来源：${source}` +
@@ -267,14 +292,18 @@ function bulk(value) {
   state.undo = targets.map((account) => ({
     id: account.account_id,
     hadOwn: hasOwn(state.reviews, account.account_id),
-    value: state.reviews[account.account_id]
+    value: state.reviews[account.account_id],
+    wasDirty: state.dirty.has(account.account_id)
   }));
-  targets.forEach((account) => { state.reviews[account.account_id] = value; });
+  targets.forEach((account) => {
+    state.reviews[account.account_id] = value;
+    state.dirty.add(account.account_id);
+  });
   saveReviews(); render();
 }
 
-function requestDataset({ automatic = false } = {}) {
-  if (syncPending) return;
+function requestDataset({ automatic = false, force = false } = {}) {
+  if (syncPending && !force) return;
   clearTimeout(syncTimer);
   syncPending = true;
   elements.sync.disabled = true;
@@ -296,12 +325,16 @@ function requestDataset({ automatic = false } = {}) {
 window.addEventListener("xfc:bridge-ready", () => {
   state.bridge = true; elements.bridge.textContent = "油猴已连接"; elements.bridge.className = "pill good";
   dashboardLog("info", "油猴数据桥已连接。");
-  if (!receivedDataset) requestDataset({ automatic: true });
+  if (!receivedDataset) requestDataset({ automatic: true, force: true });
 });
 window.addEventListener("xfc:dataset", (event) => {
   clearTimeout(syncTimer);
   syncPending = false;
   receivedDataset = true;
+  state.bridge = true;
+  state.remoteQueue = Array.isArray(event.detail?.queue) ? event.detail.queue : [];
+  elements.bridge.textContent = "油猴已连接";
+  elements.bridge.className = "pill good";
   elements.sync.disabled = false;
   elements.sync.textContent = "从油猴同步";
   dashboardLog("info", "收到油猴数据集。", {
@@ -316,9 +349,15 @@ window.addEventListener("xfc:dataset", (event) => {
 });
 window.addEventListener("xfc:reviews-saved", (event) => {
   clearTimeout(queueTimer);
+  state.dirty.clear();
+  state.reviews = {};
+  saveReviews();
   elements.send.disabled = false;
   elements.send.textContent = "发送待取消队列";
-  elements.notice.textContent = `已写回 ${event.detail?.saved || 0} 个标记，待取消队列 ${event.detail?.queued || 0} 人。请回到 X 页面执行。`;
+  elements.notice.textContent =
+    `已写回 ${event.detail?.saved || 0} 个标记；活动队列 ${event.detail?.queued || 0} 人` +
+    `，已处理并忽略 ${event.detail?.ignored_processed || 0} 人` +
+    `，从旧队列移除 ${event.detail?.removed_from_previous || 0} 人。`;
   dashboardLog("info", "审核标记已写回油猴。", event.detail);
 });
 window.addEventListener("xfc:reviews-error", (event) => {
@@ -339,13 +378,21 @@ elements.save.onclick = () => downloadCSV(`x_following_reviewed_${new Date().toI
 elements.send.onclick = () => {
   if (!state.bridge) { elements.notice.textContent = "没有连接油猴脚本，请先安装对应域名版本并刷新页面。"; return; }
   const reviews = state.accounts.map((account) => ({ account_id: account.account_id, review_status: reviewOf(account) }));
+  const removeIds = state.accounts
+    .filter((account) => reviewOf(account) === "remove")
+    .map((account) => account.account_id);
+  if (
+    removeIds.length === 0 &&
+    state.remoteQueue.length > 0 &&
+    !confirm(`当前没有选择待取消账号。继续将清空油猴中的 ${state.remoteQueue.length} 个未处理队列项，确定吗？`)
+  ) return;
   clearTimeout(queueTimer);
   elements.send.disabled = true;
   elements.send.textContent = "发送中…";
   elements.notice.textContent = "正在把审核标记写回油猴本地队列…";
   dashboardLog("info", "发送审核标记。", { reviews: reviews.length });
   window.dispatchEvent(new CustomEvent("xfc:save-reviews", {
-    detail: { reviews, source_user_id: state.sourceUserId }
+    detail: { reviews, remove_ids: removeIds, source_user_id: state.sourceUserId }
   }));
   queueTimer = setTimeout(() => {
     elements.send.disabled = false;
@@ -361,14 +408,21 @@ $("#bulk-clear").onclick = () => {
   state.undo = targets.map((account) => ({
     id: account.account_id,
     hadOwn: hasOwn(state.reviews, account.account_id),
-    value: state.reviews[account.account_id]
+    value: state.reviews[account.account_id],
+    wasDirty: state.dirty.has(account.account_id)
   }));
-  targets.forEach((account) => { state.reviews[account.account_id] = ""; }); saveReviews(); render();
+  targets.forEach((account) => {
+    state.reviews[account.account_id] = "";
+    state.dirty.add(account.account_id);
+  });
+  saveReviews(); render();
 };
 elements.undo.onclick = () => {
   for (const item of state.undo || []) {
     if (item.hadOwn) state.reviews[item.id] = item.value;
     else delete state.reviews[item.id];
+    if (item.wasDirty) state.dirty.add(item.id);
+    else state.dirty.delete(item.id);
   }
   state.undo = null; saveReviews(); render();
 };
@@ -377,9 +431,32 @@ $("#reset-filters").onclick = () => {
   [elements.dataStatus,elements.blueStatus,elements.reviewStatus].forEach((select) => { select.value = "all"; });
   elements.sort.value = "inactive_desc"; state.page = 1; render();
 };
-document.querySelectorAll("[data-days]").forEach((button) => button.onclick = () => { elements.minInactive.value = button.dataset.days; state.page = 1; render(); });
-$("#quick-errors").onclick = () => { elements.dataStatus.value = "error"; state.page = 1; render(); };
-$("#quick-remove").onclick = () => { elements.reviewStatus.value = "remove"; state.page = 1; render(); };
+function updateQuickFilters() {
+  document.querySelectorAll("[data-days]").forEach((button) => {
+    const active = elements.minInactive.value === button.dataset.days;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  const errorsActive = elements.dataStatus.value === "error";
+  $("#quick-errors").classList.toggle("active", errorsActive);
+  $("#quick-errors").setAttribute("aria-pressed", String(errorsActive));
+  const removeActive = elements.reviewStatus.value === "remove";
+  $("#quick-remove").classList.toggle("active", removeActive);
+  $("#quick-remove").setAttribute("aria-pressed", String(removeActive));
+}
+document.querySelectorAll("[data-days]").forEach((button) => button.onclick = () => {
+  elements.minInactive.value =
+    elements.minInactive.value === button.dataset.days ? "" : button.dataset.days;
+  state.page = 1; render();
+});
+$("#quick-errors").onclick = () => {
+  elements.dataStatus.value = elements.dataStatus.value === "error" ? "all" : "error";
+  state.page = 1; render();
+};
+$("#quick-remove").onclick = () => {
+  elements.reviewStatus.value = elements.reviewStatus.value === "remove" ? "all" : "remove";
+  state.page = 1; render();
+};
 [elements.query,elements.minInactive,elements.maxInactive,elements.minFollowers,elements.maxFollowers].forEach((input) => input.oninput = () => { state.page = 1; render(); });
 [elements.dataStatus,elements.blueStatus,elements.reviewStatus,elements.sort].forEach((select) => select.onchange = () => { state.page = 1; render(); });
 elements.pageSize.onchange = () => { state.pageSize = Number(elements.pageSize.value); state.page = 1; render(); };

@@ -19,15 +19,21 @@ assert.match(bundle, /anonymous:\s*true/);
 assert.match(bundle, /id="xfc-probe-concurrency"/);
 assert.match(bundle, /id="xfc-refresh-queue"/);
 assert.match(bundle, /id="xfc-auto-destroy"/);
+assert.match(bundle, /id="xfc-probe-all"/);
 assert.match(bundle, /overscroll-behavior:contain/);
+assert.match(bundle, /passive:\s*false/);
 assert.match(bundle, /清空当前账号数据/);
+assert.doesNotMatch(bundle, /document\.documentElement\.style\.overflow/);
 assert.match(bundle, /GM_addValueChangeListener/);
 assert.doesNotMatch(bundle, /__DASHBOARD_MATCH__/);
 assert.doesNotMatch(bundle, /__DASHBOARD_(URL|ICON)__/);
 assert.doesNotMatch(bundle, /__USERSCRIPT_URL__/);
 const dashboardSource = fs.readFileSync(path.join(root, "web", "dashboard.js"), "utf8");
 assert.match(dashboardSource, /queueMicrotask\(\(\) => requestDataset/);
-assert.match(dashboardSource, /state\.reviews\[account\.account_id\] = reviewOf\(account\) === value \? "" : value/);
+assert.match(dashboardSource, /requestDataset\(\{ automatic: true, force: true \}\)/);
+assert.match(dashboardSource, /remove_ids: removeIds/);
+assert.match(dashboardSource, /state\.dirty\.add\(account\.account_id\)/);
+assert.match(dashboardSource, /button\.classList\.toggle\("active", active\)/);
 
 const core = fs.readFileSync(path.join(root, "src", "core.js"), "utf8");
 const gmStorage = new Map();
@@ -141,4 +147,39 @@ assert.ok(!("cookie" in automaticTemplate.headers));
 assert.ok(!("x-csrf-token" in automaticTemplate.headers));
 await unfollowApp.unfollow.saveAutomaticTemplate();
 assert.equal(savedAutomaticTemplate.source, "automatic");
+
+const queueDataset = {
+  source_user_id: "123",
+  accounts: [
+    { account_id: "1", screen_name: "done", review_status: "remove", unfollow_status: "success", unfollowed_at: "2026-07-31T00:00:00Z" },
+    { account_id: "2", screen_name: "retry", review_status: "remove" },
+    { account_id: "3", screen_name: "new", review_status: "" }
+  ]
+};
+let savedQueue = [];
+const queueApp = {
+  nowIso: () => "2026-07-31T00:00:00.000Z",
+  parseCurl: () => { throw new Error("not used"); },
+  loadDataset: async () => queueDataset,
+  saveDataset: async () => queueDataset,
+  loadUnfollowQueue: async () => [
+    { account_id: "1", screen_name: "done", status: "success" },
+    { account_id: "2", screen_name: "retry", status: "failed" }
+  ],
+  saveUnfollowQueue: async (queue) => { savedQueue = queue; }
+};
+const queueContext = {
+  window: { XFollowCleaner: queueApp },
+  document: { documentElement: { lang: "zh-CN" } },
+  URL,
+  URLSearchParams
+};
+vm.runInNewContext(unfollowSource, queueContext);
+const queueResult = await queueApp.unfollow.queueAccounts(["1", "2", "3"]);
+assert.deepEqual(Array.from(savedQueue, (item) => item.account_id), ["2", "3"]);
+assert.equal(savedQueue[0].status, "failed");
+assert.equal(savedQueue[1].status, "pending");
+assert.equal(queueDataset.accounts[0].review_status, "done");
+assert.equal(queueResult.stats.ignored_processed, 1);
+assert.equal(queueResult.stats.queued, 2);
 console.log("All tests passed.");

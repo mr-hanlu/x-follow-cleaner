@@ -85,21 +85,49 @@
       const sourceUserId = String(dataset.source_user_id || "");
       if (!sourceUserId) throw new Error("没有活动账号，无法建立取消队列。");
       const known = new Map(dataset.accounts.map((account) => [String(account.account_id), account]));
+      const previousQueue = await app.loadUnfollowQueue(sourceUserId);
+      const previous = new Map(previousQueue.map((item) => [String(item.account_id), item]));
       const queue = [];
+      let ignoredProcessed = 0;
+      let ignoredUnknown = 0;
       for (const value of accounts) {
         const id = String(value.account_id || value || "");
-        if (!/^\d+$/.test(id) || !known.has(id)) continue;
+        if (!/^\d+$/.test(id) || !known.has(id)) {
+          ignoredUnknown += 1;
+          continue;
+        }
         const account = known.get(id);
+        const processed =
+          account.unfollow_status === "success" ||
+          Boolean(account.unfollowed_at);
+        if (processed) {
+          account.review_status = "done";
+          ignoredProcessed += 1;
+          continue;
+        }
         account.review_status = "remove";
+        const previousStatus = previous.get(id)?.status;
         queue.push({
           account_id: id,
           screen_name: account.screen_name,
-          status: account.unfollow_status === "success" ? "success" : "pending"
+          status: previousStatus === "failed" ? "failed" : "pending"
         });
       }
       await app.saveDataset(dataset);
       await app.saveUnfollowQueue(queue, sourceUserId);
-      return queue;
+      return {
+        queue,
+        stats: {
+          selected: accounts.length,
+          queued: queue.length,
+          failed: queue.filter((item) => item.status === "failed").length,
+          ignored_processed: ignoredProcessed,
+          ignored_unknown: ignoredUnknown,
+          removed_from_previous: previousQueue.filter((item) =>
+            !queue.some((queued) => queued.account_id === item.account_id)
+          ).length
+        }
+      };
     },
 
     async start(options = {}, onProgress = () => {}) {
@@ -137,6 +165,7 @@
       const map = new Map(dataset.accounts.map((account) => [String(account.account_id), account]));
       this.running = true;
       this.stopRequested = false;
+      let batchSucceeded = 0;
       onProgress({
         phase: "start",
         message: `取消关注任务准备完成，本批 ${targets.length} 人`,
@@ -185,13 +214,20 @@
           } catch (error) {
             if (String(error.message || error).includes("429")) throw error;
           }
-          const queueItem = queue.find((item) => item.account_id === target.account_id);
-          if (queueItem) queueItem.status = status;
+          const latestQueue = await app.loadUnfollowQueue(sourceUserId);
+          if (status === "success") {
+            queue = latestQueue.filter((item) => item.account_id !== target.account_id);
+          } else {
+            queue = latestQueue;
+            const queueItem = queue.find((item) => item.account_id === target.account_id);
+            if (queueItem) queueItem.status = status;
+          }
           const account = map.get(target.account_id);
           if (account) {
             account.unfollow_status = status;
             account.unfollow_http_status = httpStatus || "";
             if (status === "success") {
+              batchSucceeded += 1;
               account.unfollowed_at = app.nowIso();
               account.review_status = "done";
             }
@@ -212,17 +248,14 @@
           if (index + 1 < targets.length) await app.sleep(intervalMs);
         }
         if (this.stopRequested) {
-          const completed = targets.filter((target) =>
-            queue.find((item) => item.account_id === target.account_id)?.status === "success"
-          ).length;
           onProgress({
             phase: "stopped",
-            message: `已安全停止；本批成功 ${completed}/${targets.length}`,
-            current: completed,
+            message: `已安全停止；本批成功 ${batchSucceeded}/${targets.length}`,
+            current: batchSucceeded,
             total: targets.length
           });
           app.log("warn", "Unfollow", "用户请求停止", {
-            completed,
+            completed: batchSucceeded,
             total: targets.length
           });
         }

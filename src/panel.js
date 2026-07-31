@@ -55,6 +55,7 @@
                 <label>本次最多<input id="xfc-probe-limit" type="number" min="0" value="50"></label>
                 <label>间隔（秒）<input id="xfc-probe-delay" type="number" min="1" value="3"></label>
                 <label>并发数<input id="xfc-probe-concurrency" type="number" min="1" max="8" value="2"></label>
+                <label><span>数量</span><span><input id="xfc-probe-all" type="checkbox">处理全部剩余</span></label>
                 <label><span>范围</span><span><input id="xfc-retry-failed" type="checkbox">重试全部异常</span></label>
               </div>
               <div class="row"><button class="primary" id="xfc-probe-start">开始探测</button><button id="xfc-stop">安全停止</button></div>
@@ -97,22 +98,6 @@
       const log = (value, level = "info", scope = "UI") => {
         app.log(level, scope, value);
       };
-      let savedPageOverflow = null;
-      const lockPageScroll = () => {
-        if (savedPageOverflow) return;
-        savedPageOverflow = {
-          html: document.documentElement.style.overflow,
-          body: document.body.style.overflow
-        };
-        document.documentElement.style.overflow = "hidden";
-        document.body.style.overflow = "hidden";
-      };
-      const unlockPageScroll = () => {
-        if (!savedPageOverflow) return;
-        document.documentElement.style.overflow = savedPageOverflow.html;
-        document.body.style.overflow = savedPageOverflow.body;
-        savedPageOverflow = null;
-      };
       const setProgress = (id, update = {}) => {
         const root = el(id);
         const phase = update.phase || "progress";
@@ -136,11 +121,14 @@
       const refreshQueue = async (writeLog = true) => {
         const sourceUserId = await app.getActiveSourceId();
         const queue = await app.loadUnfollowQueue(sourceUserId);
-        const pending = queue.filter((item) => item.status !== "success");
-        const success = queue.filter((item) => item.status === "success").length;
+        const dataset = await app.loadDataset(sourceUserId);
+        const pending = queue;
+        const success = dataset.accounts.filter((account) =>
+          account.unfollow_status === "success" || account.unfollowed_at
+        ).length;
         const failed = queue.filter((item) => item.status === "failed").length;
         el("xfc-queue-summary").textContent =
-          `队列 ${queue.length} 人 · 待处理 ${pending.length} · 已成功 ${success}` +
+          `活动队列 ${pending.length} 人 · 历史成功 ${success}` +
           (failed ? ` · 失败待重试 ${failed}` : "");
         const list = el("xfc-queue-list");
         list.hidden = pending.length === 0;
@@ -151,7 +139,7 @@
           )
           .join("\n");
         if (writeLog) {
-          log(`取消队列已刷新：总计 ${queue.length}，待处理 ${pending.length}，已成功 ${success}。`, "info", "Unfollow");
+          log(`取消队列已刷新：待处理 ${pending.length}，历史成功 ${success}。`, "info", "Unfollow");
         }
         if (
           sourceUserId &&
@@ -164,12 +152,10 @@
         }
         if (queue.length) {
           setProgress("xfc-unfollow-progress", {
-            phase: pending.length ? "stopped" : "complete",
-            message: pending.length
-              ? `取消队列待处理 ${pending.length}/${queue.length}`
-              : `取消队列已完成 ${queue.length}/${queue.length}`,
-            current: success,
-            total: queue.length
+            phase: "stopped",
+            message: `活动取消队列待处理 ${pending.length} 人 · 历史成功 ${success}`,
+            current: 0,
+            total: pending.length
           });
         } else {
           el("xfc-unfollow-progress").hidden = true;
@@ -225,15 +211,36 @@
       app.on("log", (event) => showLog(event.detail));
       this.open = () => {
         el("xfc-panel").hidden = false;
-        lockPageScroll();
         restoreState();
       };
       this.close = () => {
         el("xfc-panel").hidden = true;
-        unlockPageScroll();
       };
-      el("xfc-panel").addEventListener("wheel", (event) => event.stopPropagation(), { passive: true });
-      el("xfc-panel").addEventListener("touchmove", (event) => event.stopPropagation(), { passive: true });
+      const panel = el("xfc-panel");
+      panel.addEventListener("wheel", (event) => {
+        const atTop = panel.scrollTop <= 0;
+        const atBottom = Math.ceil(panel.scrollTop + panel.clientHeight) >= panel.scrollHeight;
+        if ((event.deltaY < 0 && atTop) || (event.deltaY > 0 && atBottom)) {
+          event.preventDefault();
+        }
+        event.stopPropagation();
+      }, { passive: false });
+      let lastTouchY = null;
+      panel.addEventListener("touchstart", (event) => {
+        lastTouchY = event.touches[0]?.clientY ?? null;
+      }, { passive: true });
+      panel.addEventListener("touchmove", (event) => {
+        const currentY = event.touches[0]?.clientY;
+        if (lastTouchY == null || currentY == null) return;
+        const deltaY = lastTouchY - currentY;
+        lastTouchY = currentY;
+        const atTop = panel.scrollTop <= 0;
+        const atBottom = Math.ceil(panel.scrollTop + panel.clientHeight) >= panel.scrollHeight;
+        if ((deltaY < 0 && atTop) || (deltaY > 0 && atBottom)) {
+          event.preventDefault();
+        }
+        event.stopPropagation();
+      }, { passive: false });
       el("xfc-launch").onclick = () => {
         if (el("xfc-panel").hidden) this.open();
         else this.close();
@@ -267,7 +274,7 @@
         setBusy("xfc-probe-start", true, "正在探测…", "开始探测");
         try {
           const dataset = await app.profileProbe.start({
-            limit: Number(el("xfc-probe-limit").value),
+            limit: el("xfc-probe-all").checked ? 0 : Number(el("xfc-probe-limit").value),
             intervalMs: Number(el("xfc-probe-delay").value) * 1000,
             concurrency: Number(el("xfc-probe-concurrency").value),
             retryFailed: el("xfc-retry-failed").checked
@@ -285,6 +292,9 @@
           setBusy("xfc-probe-start", false, "", "开始探测");
           await restoreState();
         }
+      };
+      el("xfc-probe-all").onchange = () => {
+        el("xfc-probe-limit").disabled = el("xfc-probe-all").checked;
       };
       el("xfc-stop").onclick = () => {
         app.following.stop();

@@ -3,11 +3,13 @@
     install() {
       if (location.hostname === "x.com") return;
 
-      window.addEventListener("xfc:request-dataset", async () => {
+      const sendDataset = async () => {
         const dataset = await app.loadDataset();
+        const queue = await app.loadUnfollowQueue(dataset.source_user_id);
         app.log("info", "Bridge", "向筛选页面发送数据集", {
           accounts: dataset.accounts.length,
-          updated_at: dataset.updated_at
+          updated_at: dataset.updated_at,
+          queued: queue.length
         });
         window.dispatchEvent(
           new CustomEvent("xfc:dataset", {
@@ -15,11 +17,14 @@
               schema_version: dataset.schema_version,
               source_user_id: dataset.source_user_id,
               updated_at: dataset.updated_at,
-              accounts: dataset.accounts
+              accounts: dataset.accounts,
+              queue
             }
           })
         );
-      });
+      };
+
+      window.addEventListener("xfc:request-dataset", sendDataset);
 
       window.addEventListener("xfc:save-reviews", async (event) => {
         const reviews = Array.isArray(event.detail?.reviews) ? event.detail.reviews : [];
@@ -45,21 +50,29 @@
           const id = String(review.account_id || "");
           const status = String(review.review_status || "");
           if (!map.has(id) || !["", "keep", "remove", "done"].includes(status)) continue;
-          map.get(id).review_status = status;
+          const account = map.get(id);
+          account.review_status =
+            account.unfollow_status === "success" || account.unfollowed_at
+              ? "done"
+              : status;
         }
         await app.saveDataset(dataset);
-        const queue = await app.unfollow.queueAccounts(
-          dataset.accounts.filter((account) => account.review_status === "remove")
-        );
+        const removeIds = Array.isArray(event.detail?.remove_ids)
+          ? event.detail.remove_ids
+          : dataset.accounts
+              .filter((account) => account.review_status === "remove")
+              .map((account) => account.account_id);
+        const result = await app.unfollow.queueAccounts(removeIds);
         app.log("info", "Bridge", "审核标记已写回", {
           reviews: reviews.length,
-          queued: queue.filter((item) => item.status !== "success").length
+          ...result.stats
         });
         window.dispatchEvent(
           new CustomEvent("xfc:reviews-saved", {
-            detail: { saved: reviews.length, queued: queue.filter((item) => item.status !== "success").length }
+            detail: { saved: reviews.length, ...result.stats }
           })
         );
+        await sendDataset();
       });
 
       window.dispatchEvent(new CustomEvent("xfc:bridge-ready"));
