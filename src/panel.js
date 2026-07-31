@@ -9,7 +9,7 @@
     #xfc-panel .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}#xfc-panel button,#xfc-panel a.xfc-btn{border:1px solid #cfd9de;border-radius:999px;padding:7px 11px;background:#fff;color:#0f1419;text-decoration:none;font:700 12px system-ui;cursor:pointer}
     #xfc-panel button.primary{background:#0f1419;color:#fff;border-color:#0f1419}#xfc-panel button.danger{background:#b42318;color:#fff;border-color:#b42318}
     #xfc-panel button.xfc-clear-danger{background:#fff0ee;color:#b42318;border-color:#f2a49d}
-    #xfc-panel button.xfc-help-button{width:31px;height:31px;padding:0;font-size:15px}
+    #xfc-panel button.xfc-help-button{height:31px;padding:0 10px;font-size:12px}
     #xfc-panel button:disabled{cursor:wait;opacity:.55}
     #xfc-panel label{display:flex;flex-direction:column;gap:4px;color:#536471;font-size:11px}#xfc-panel input{width:92px;padding:6px 8px;border:1px solid #cfd9de;border-radius:8px}#xfc-panel input[type=checkbox]{width:auto;padding:0}
     #xfc-account-summary{margin-bottom:5px;padding:9px;border-radius:9px;background:#fff8dc;color:#655016;font-size:10px}
@@ -39,7 +39,7 @@
           <header>
             <h2>关注清理助手</h2>
             <div class="xfc-header-actions">
-              <button class="xfc-help-button" id="xfc-help-toggle" title="使用帮助" aria-label="使用帮助" aria-expanded="false">❓</button>
+              <button class="xfc-help-button" id="xfc-help-toggle" title="使用帮助" aria-label="使用帮助" aria-expanded="false">❓ 帮助</button>
               <button class="xfc-clear-danger" id="xfc-clear-data">清空当前账号数据</button>
               <button id="xfc-close">关闭</button>
             </div>

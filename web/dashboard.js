@@ -42,11 +42,23 @@ const elements = {
 };
 
 const helpDialog = $("#help-dialog");
-$("#help-toggle").onclick = () => helpDialog.showModal();
+const topbar = $(".topbar");
+const syncTopbarHeight = () => {
+  document.documentElement.style.setProperty("--topbar-height", `${topbar.offsetHeight}px`);
+};
+const openHelp = () => {
+  document.body.classList.add("help-open");
+  helpDialog.showModal();
+};
+const closeHelp = () => helpDialog.close();
+$("#help-toggle").onclick = openHelp;
 $("#help-close").onclick = () => helpDialog.close();
 helpDialog.onclick = (event) => {
-  if (event.target === helpDialog) helpDialog.close();
+  if (event.target === helpDialog) closeHelp();
 };
+helpDialog.addEventListener("close", () => document.body.classList.remove("help-open"));
+new ResizeObserver(syncTopbarHeight).observe(topbar);
+syncTopbarHeight();
 
 function decisionKey(sourceUserId = "") {
   return `${DECISION_KEY_PREFIX}${sourceUserId || "unscoped"}`;

@@ -3,7 +3,7 @@
 // @name:zh-CN   X/Twitter 关注清理助手｜活跃分析与安全分批取消
 // @name:en      X Following Cleaner – Activity Review & Safe Batch Unfollow
 // @namespace    https://github.com/mr-hanlu/x-follow-cleaner
-// @version      0.7.0
+// @version      0.7.1
 // @description  导出关注列表、匿名探测公开主页活跃时间，并按确认队列分批取消关注。
 // @description:zh-CN 本地导出并筛选 X/Twitter 关注列表，匿名检查最近公开活动，按确认队列安全分批取消关注。
 // @description:en Export and review your X/Twitter following list locally, check recent public activity, and unfollow confirmed accounts in controlled batches.
@@ -1300,7 +1300,7 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
     #xfc-panel .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}#xfc-panel button,#xfc-panel a.xfc-btn{border:1px solid #cfd9de;border-radius:999px;padding:7px 11px;background:#fff;color:#0f1419;text-decoration:none;font:700 12px system-ui;cursor:pointer}
     #xfc-panel button.primary{background:#0f1419;color:#fff;border-color:#0f1419}#xfc-panel button.danger{background:#b42318;color:#fff;border-color:#b42318}
     #xfc-panel button.xfc-clear-danger{background:#fff0ee;color:#b42318;border-color:#f2a49d}
-    #xfc-panel button.xfc-help-button{width:31px;height:31px;padding:0;font-size:15px}
+    #xfc-panel button.xfc-help-button{height:31px;padding:0 10px;font-size:12px}
     #xfc-panel button:disabled{cursor:wait;opacity:.55}
     #xfc-panel label{display:flex;flex-direction:column;gap:4px;color:#536471;font-size:11px}#xfc-panel input{width:92px;padding:6px 8px;border:1px solid #cfd9de;border-radius:8px}#xfc-panel input[type=checkbox]{width:auto;padding:0}
     #xfc-account-summary{margin-bottom:5px;padding:9px;border-radius:9px;background:#fff8dc;color:#655016;font-size:10px}
@@ -1330,7 +1330,7 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
           <header>
             <h2>关注清理助手</h2>
             <div class="xfc-header-actions">
-              <button class="xfc-help-button" id="xfc-help-toggle" title="使用帮助" aria-label="使用帮助" aria-expanded="false">❓</button>
+              <button class="xfc-help-button" id="xfc-help-toggle" title="使用帮助" aria-label="使用帮助" aria-expanded="false">❓ 帮助</button>
               <button class="xfc-clear-danger" id="xfc-clear-data">清空当前账号数据</button>
               <button id="xfc-close">关闭</button>
             </div>

@@ -4,6 +4,7 @@
 
 - [安装油猴脚本（Greasy Fork）](https://greasyfork.org/zh-CN/scripts/589294-x-%E5%85%B3%E6%B3%A8%E6%B8%85%E7%90%86%E5%8A%A9%E6%89%8B)
 - [打开关注清理台](https://x-follow-cleaner.mrhanlu224.workers.dev/)
+- [查看完整技术说明](./TECHNICAL.md)
 
 ## 主要功能
 
@@ -98,6 +99,7 @@ dist/                本地构建的油猴安装文件
 web/                 Cloudflare 部署目录
 web/download/        页面提供下载的油猴安装文件
 GREASYFORK.md        可粘贴到 Greasy Fork 的中英文说明
+TECHNICAL.md         当前实现、数据流与多语言演进说明
 LICENSE              MIT 许可证
 ```
 
