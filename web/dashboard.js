@@ -1,6 +1,13 @@
 "use strict";
 
 const DECISION_KEY = "xfc-dashboard-reviews-v1";
+const dashboardLog = (level, message, details) => {
+  const method = ["info", "warn", "error"].includes(level) ? level : "log";
+  if (details === undefined) console[method](`[XFC Dashboard] ${message}`);
+  else console[method](`[XFC Dashboard] ${message}`, details);
+};
+let syncTimer = null;
+let queueTimer = null;
 const state = {
   accounts: [],
   reviews: loadReviews(),
@@ -231,12 +238,39 @@ function bulk(value) {
 
 window.addEventListener("xfc:bridge-ready", () => {
   state.bridge = true; elements.bridge.textContent = "油猴已连接"; elements.bridge.className = "pill good";
+  dashboardLog("info", "油猴数据桥已连接。");
 });
-window.addEventListener("xfc:dataset", (event) => loadAccounts(event.detail?.accounts || [], "油猴本地数据"));
+window.addEventListener("xfc:dataset", (event) => {
+  clearTimeout(syncTimer);
+  elements.sync.disabled = false;
+  elements.sync.textContent = "从油猴同步";
+  dashboardLog("info", "收到油猴数据集。", {
+    accounts: event.detail?.accounts?.length || 0,
+    updated_at: event.detail?.updated_at || ""
+  });
+  loadAccounts(event.detail?.accounts || [], "油猴本地数据");
+});
 window.addEventListener("xfc:reviews-saved", (event) => {
+  clearTimeout(queueTimer);
+  elements.send.disabled = false;
+  elements.send.textContent = "发送待取消队列";
   elements.notice.textContent = `已写回 ${event.detail?.saved || 0} 个标记，待取消队列 ${event.detail?.queued || 0} 人。请回到 X 页面执行。`;
+  dashboardLog("info", "审核标记已写回油猴。", event.detail);
 });
-elements.sync.onclick = () => window.dispatchEvent(new CustomEvent("xfc:request-dataset"));
+elements.sync.onclick = () => {
+  clearTimeout(syncTimer);
+  elements.sync.disabled = true;
+  elements.sync.textContent = "同步中…";
+  elements.notice.textContent = "正在从油猴本地存储读取数据…";
+  dashboardLog("info", "请求油猴数据集。");
+  window.dispatchEvent(new CustomEvent("xfc:request-dataset"));
+  syncTimer = setTimeout(() => {
+    elements.sync.disabled = false;
+    elements.sync.textContent = "从油猴同步";
+    elements.notice.textContent = "同步超时：请确认油猴脚本已安装、当前版本包含这个正式域名，然后刷新页面重试。";
+    dashboardLog("warn", "等待油猴数据集超时。");
+  }, 5000);
+};
 elements.file.onchange = async (event) => {
   const file = event.target.files?.[0]; if (!file) return;
   loadAccounts(parseCSV(await file.text()), file.name); elements.file.value = "";
@@ -245,7 +279,18 @@ elements.save.onclick = () => downloadCSV(`x_following_reviewed_${new Date().toI
 elements.send.onclick = () => {
   if (!state.bridge) { elements.notice.textContent = "没有连接油猴脚本，请先安装对应域名版本并刷新页面。"; return; }
   const reviews = state.accounts.map((account) => ({ account_id: account.account_id, review_status: reviewOf(account) }));
+  clearTimeout(queueTimer);
+  elements.send.disabled = true;
+  elements.send.textContent = "发送中…";
+  elements.notice.textContent = "正在把审核标记写回油猴本地队列…";
+  dashboardLog("info", "发送审核标记。", { reviews: reviews.length });
   window.dispatchEvent(new CustomEvent("xfc:save-reviews", { detail: { reviews } }));
+  queueTimer = setTimeout(() => {
+    elements.send.disabled = false;
+    elements.send.textContent = "发送待取消队列";
+    elements.notice.textContent = "发送超时：油猴数据桥没有响应，请刷新页面后重试。";
+    dashboardLog("warn", "等待审核标记写回确认超时。");
+  }, 5000);
 };
 $("#bulk-keep").onclick = () => bulk("keep"); $("#bulk-remove").onclick = () => bulk("remove");
 $("#bulk-clear").onclick = () => {

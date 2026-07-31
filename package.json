@@ -1,10 +1,11 @@
 {
   "name": "x-follow-cleaner",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node scripts/build.mjs",
+    "build": "node --env-file=.env.production scripts/build.mjs",
+    "build:local": "DASHBOARD_URL=http://localhost:8788/ node scripts/build.mjs",
     "test": "node scripts/test.mjs"
   }
 }

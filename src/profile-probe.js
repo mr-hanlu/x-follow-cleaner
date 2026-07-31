@@ -95,11 +95,35 @@
       this.running = true;
       this.stopRequested = false;
       let completed = 0;
+      onProgress({
+        phase: targets.length ? "start" : "complete",
+        message: targets.length
+          ? `匿名探测准备完成，共 ${targets.length} 个账号`
+          : "没有需要探测的账号",
+        current: 0,
+        total: targets.length
+      });
+      app.log("info", "ProfileProbe", "任务开始", {
+        targets: targets.length,
+        interval_ms: intervalMs,
+        retry_failed: retryFailed
+      });
 
       try {
         for (const target of targets) {
           if (this.stopRequested) break;
           let result;
+          onProgress({
+            phase: "request",
+            message: `正在请求 ${completed + 1}/${targets.length}：@${target.screen_name}`,
+            current: completed,
+            total: targets.length
+          });
+          app.log("info", "ProfileProbe", `请求 @${target.screen_name}`, {
+            current: completed + 1,
+            total: targets.length,
+            anonymous: true
+          });
           try {
             const response = await requestAnonymous(
               `https://x.com/${encodeURIComponent(target.screen_name)}`,
@@ -136,15 +160,40 @@
           await app.saveDataset(dataset);
           completed += 1;
           onProgress({
+            phase: completed === targets.length ? "complete" : "progress",
             message: `匿名探测 ${completed}/${targets.length}：@${target.screen_name} ${result.data_status}`,
             current: completed,
             total: targets.length
           });
+          app.log(
+            result.data_status === "ok" ? "info" : "warn",
+            "ProfileProbe",
+            `@${target.screen_name} ${result.data_status}`,
+            { current: completed, total: targets.length }
+          );
           if (completed < targets.length) {
             await app.sleep(intervalMs + Math.random() * Math.min(intervalMs * 0.35, 1500));
           }
         }
+        if (this.stopRequested) {
+          onProgress({
+            phase: "stopped",
+            message: `已安全停止；本轮完成 ${completed}/${targets.length}`,
+            current: completed,
+            total: targets.length
+          });
+          app.log("warn", "ProfileProbe", "用户请求停止", {
+            completed,
+            total: targets.length
+          });
+        }
         return dataset;
+      } catch (error) {
+        app.log("error", "ProfileProbe", error.message || String(error), {
+          completed,
+          total: targets.length
+        });
+        throw error;
       } finally {
         this.running = false;
       }

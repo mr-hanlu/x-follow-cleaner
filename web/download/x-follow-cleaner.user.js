@@ -1,12 +1,15 @@
 // ==UserScript==
 // @name         X 关注清理助手
 // @namespace    https://github.com/local/x-follow-cleaner
-// @version      0.1.0
+// @version      0.2.0
 // @description  导出关注列表、匿名探测公开主页活跃时间，并按确认队列分批取消关注。
-// @author       Local
+// @author       Mr Hanlu
 // @match        https://x.com/*
-// @match        http://localhost/*
-// @icon         https://x.com/favicon.ico
+// @match        https://x-follow-cleaner.mrhanlu224.workers.dev/*
+// @icon         https://x-follow-cleaner.mrhanlu224.workers.dev/favicon.svg
+// @homepageURL  https://x-follow-cleaner.mrhanlu224.workers.dev/
+// @updateURL    https://x-follow-cleaner.mrhanlu224.workers.dev/download/x-follow-cleaner.user.js
+// @downloadURL  https://x-follow-cleaner.mrhanlu224.workers.dev/download/x-follow-cleaner.user.js
 // @run-at       document-idle
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -21,7 +24,7 @@
 (function () {
 "use strict";
 window.XFollowCleaner = window.XFollowCleaner || {};
-window.XFollowCleaner.dashboardUrl = "http://localhost:8788/";
+window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.workers.dev/";
 
 /* ---- core.js ---- */
 (function (app) {
@@ -62,6 +65,17 @@ window.XFollowCleaner.dashboardUrl = "http://localhost:8788/";
 
   app.sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   app.nowIso = () => new Date().toISOString();
+
+  app.log = function (level, scope, message, details) {
+    const normalizedLevel = ["debug", "info", "warn", "error"].includes(level)
+      ? level
+      : "info";
+    const prefix = `[XFC][${scope}][${new Date().toLocaleTimeString()}]`;
+    const method = normalizedLevel === "debug" ? "debug" : normalizedLevel;
+    if (details === undefined) console[method](`${prefix} ${message}`);
+    else console[method](`${prefix} ${message}`, details);
+    app.emit("log", { level: normalizedLevel, scope, message, details });
+  };
 
   app.gmGet = async function (key, fallback) {
     const value = await Promise.resolve(GM_getValue(key, fallback));
@@ -380,6 +394,16 @@ window.XFollowCleaner.dashboardUrl = "http://localhost:8788/";
       let page = Number(dataset.following_page || 0);
       this.running = true;
       this.stopRequested = false;
+      onProgress({
+        phase: "start",
+        message: `正在准备关注列表导出；已有 ${dataset.accounts.length} 人，第 ${page + 1} 页即将请求`,
+        current: dataset.accounts.length,
+        page
+      });
+      app.log("info", "Following", "任务开始", {
+        existing_accounts: dataset.accounts.length,
+        next_page: page + 1
+      });
 
       try {
         while (!this.stopRequested && !dataset.completed_following) {
@@ -400,7 +424,22 @@ window.XFollowCleaner.dashboardUrl = "http://localhost:8788/";
           if (parsed.headers["x-client-transaction-id"]) {
             headers["x-client-transaction-id"] = parsed.headers["x-client-transaction-id"];
           }
+          onProgress({
+            phase: "request",
+            message: `正在请求关注列表第 ${page + 1} 页…`,
+            current: dataset.accounts.length,
+            page
+          });
+          app.log("info", "Following", `请求第 ${page + 1} 页`, {
+            saved_accounts: dataset.accounts.length,
+            has_cursor: Boolean(cursor)
+          });
           const response = await fetch(url, { method: "GET", credentials: "include", headers });
+          app.log(
+            response.ok ? "info" : "warn",
+            "Following",
+            `第 ${page + 1} 页返回 HTTP ${response.status}`
+          );
           if (response.status === 429) {
             throw new Error("Following 遇到 429，已保存进度并停止，请稍后继续。");
           }
@@ -419,12 +458,34 @@ window.XFollowCleaner.dashboardUrl = "http://localhost:8788/";
             !cursor || cursor === previousCursor || incoming.length === 0;
           await app.saveDataset(dataset);
           onProgress({
+            phase: dataset.completed_following ? "complete" : "progress",
             message: `关注列表第 ${page} 页：本页 ${incoming.length} 人，累计 ${dataset.accounts.length} 人`,
-            current: dataset.accounts.length
+            current: dataset.accounts.length,
+            page
+          });
+          app.log("info", "Following", `第 ${page} 页保存完成`, {
+            page_accounts: incoming.length,
+            total_accounts: dataset.accounts.length,
+            completed: dataset.completed_following
           });
           if (!dataset.completed_following) await app.sleep(900 + Math.random() * 600);
         }
+        if (this.stopRequested) {
+          onProgress({
+            phase: "stopped",
+            message: `已安全停止；当前保存 ${dataset.accounts.length} 人，可稍后继续`,
+            current: dataset.accounts.length,
+            page
+          });
+          app.log("warn", "Following", "用户请求停止", {
+            saved_accounts: dataset.accounts.length,
+            page
+          });
+        }
         return dataset;
+      } catch (error) {
+        app.log("error", "Following", error.message || String(error));
+        throw error;
       } finally {
         this.running = false;
       }
@@ -535,11 +596,35 @@ window.XFollowCleaner.dashboardUrl = "http://localhost:8788/";
       this.running = true;
       this.stopRequested = false;
       let completed = 0;
+      onProgress({
+        phase: targets.length ? "start" : "complete",
+        message: targets.length
+          ? `匿名探测准备完成，共 ${targets.length} 个账号`
+          : "没有需要探测的账号",
+        current: 0,
+        total: targets.length
+      });
+      app.log("info", "ProfileProbe", "任务开始", {
+        targets: targets.length,
+        interval_ms: intervalMs,
+        retry_failed: retryFailed
+      });
 
       try {
         for (const target of targets) {
           if (this.stopRequested) break;
           let result;
+          onProgress({
+            phase: "request",
+            message: `正在请求 ${completed + 1}/${targets.length}：@${target.screen_name}`,
+            current: completed,
+            total: targets.length
+          });
+          app.log("info", "ProfileProbe", `请求 @${target.screen_name}`, {
+            current: completed + 1,
+            total: targets.length,
+            anonymous: true
+          });
           try {
             const response = await requestAnonymous(
               `https://x.com/${encodeURIComponent(target.screen_name)}`,
@@ -576,15 +661,40 @@ window.XFollowCleaner.dashboardUrl = "http://localhost:8788/";
           await app.saveDataset(dataset);
           completed += 1;
           onProgress({
+            phase: completed === targets.length ? "complete" : "progress",
             message: `匿名探测 ${completed}/${targets.length}：@${target.screen_name} ${result.data_status}`,
             current: completed,
             total: targets.length
           });
+          app.log(
+            result.data_status === "ok" ? "info" : "warn",
+            "ProfileProbe",
+            `@${target.screen_name} ${result.data_status}`,
+            { current: completed, total: targets.length }
+          );
           if (completed < targets.length) {
             await app.sleep(intervalMs + Math.random() * Math.min(intervalMs * 0.35, 1500));
           }
         }
+        if (this.stopRequested) {
+          onProgress({
+            phase: "stopped",
+            message: `已安全停止；本轮完成 ${completed}/${targets.length}`,
+            current: completed,
+            total: targets.length
+          });
+          app.log("warn", "ProfileProbe", "用户请求停止", {
+            completed,
+            total: targets.length
+          });
+        }
         return dataset;
+      } catch (error) {
+        app.log("error", "ProfileProbe", error.message || String(error), {
+          completed,
+          total: targets.length
+        });
+        throw error;
       } finally {
         this.running = false;
       }
@@ -672,11 +782,31 @@ window.XFollowCleaner.dashboardUrl = "http://localhost:8788/";
       const map = new Map(dataset.accounts.map((account) => [String(account.account_id), account]));
       this.running = true;
       this.stopRequested = false;
+      onProgress({
+        phase: "start",
+        message: `取消关注任务准备完成，本批 ${targets.length} 人`,
+        current: 0,
+        total: targets.length
+      });
+      app.log("info", "Unfollow", "任务开始", {
+        batch_size: targets.length,
+        interval_ms: intervalMs
+      });
 
       try {
         for (let index = 0; index < targets.length; index += 1) {
           if (this.stopRequested) break;
           const target = targets[index];
+          onProgress({
+            phase: "request",
+            message: `正在处理 ${index + 1}/${targets.length}：@${target.screen_name || target.account_id}`,
+            current: index,
+            total: targets.length
+          });
+          app.log("info", "Unfollow", `请求 @${target.screen_name || target.account_id}`, {
+            current: index + 1,
+            total: targets.length
+          });
           const headers = {
             ...template.headers,
             "content-type": "application/x-www-form-urlencoded",
@@ -714,13 +844,37 @@ window.XFollowCleaner.dashboardUrl = "http://localhost:8788/";
           await app.gmSet(app.constants.UNFOLLOW_QUEUE_KEY, queue);
           await app.saveDataset(dataset);
           onProgress({
+            phase: index + 1 === targets.length ? "complete" : "progress",
             message: `取消关注 ${index + 1}/${targets.length}：@${target.screen_name || target.account_id} ${status}`,
+            current: index + 1,
+            total: targets.length
+          });
+          app.log(status === "success" ? "info" : "warn", "Unfollow", `@${target.screen_name || target.account_id} ${status}`, {
+            http_status: httpStatus,
             current: index + 1,
             total: targets.length
           });
           if (index + 1 < targets.length) await app.sleep(intervalMs);
         }
+        if (this.stopRequested) {
+          const completed = targets.filter((target) =>
+            queue.find((item) => item.account_id === target.account_id)?.status === "success"
+          ).length;
+          onProgress({
+            phase: "stopped",
+            message: `已安全停止；本批成功 ${completed}/${targets.length}`,
+            current: completed,
+            total: targets.length
+          });
+          app.log("warn", "Unfollow", "用户请求停止", {
+            completed,
+            total: targets.length
+          });
+        }
         return queue;
+      } catch (error) {
+        app.log("error", "Unfollow", error.message || String(error));
+        throw error;
       } finally {
         this.running = false;
       }
@@ -741,6 +895,10 @@ window.XFollowCleaner.dashboardUrl = "http://localhost:8788/";
 
       window.addEventListener("xfc:request-dataset", async () => {
         const dataset = await app.loadDataset();
+        app.log("info", "Bridge", "向筛选页面发送数据集", {
+          accounts: dataset.accounts.length,
+          updated_at: dataset.updated_at
+        });
         window.dispatchEvent(
           new CustomEvent("xfc:dataset", {
             detail: {
@@ -766,6 +924,10 @@ window.XFollowCleaner.dashboardUrl = "http://localhost:8788/";
         const queue = await app.unfollow.queueAccounts(
           dataset.accounts.filter((account) => account.review_status === "remove")
         );
+        app.log("info", "Bridge", "审核标记已写回", {
+          reviews: reviews.length,
+          queued: queue.filter((item) => item.status !== "success").length
+        });
         window.dispatchEvent(
           new CustomEvent("xfc:reviews-saved", {
             detail: { saved: reviews.length, queued: queue.filter((item) => item.status !== "success").length }
@@ -774,6 +936,9 @@ window.XFollowCleaner.dashboardUrl = "http://localhost:8788/";
       });
 
       window.dispatchEvent(new CustomEvent("xfc:bridge-ready"));
+      app.log("info", "Bridge", "筛选页面数据桥已就绪", {
+        origin: location.origin
+      });
     }
   };
 })(window.XFollowCleaner);
@@ -789,8 +954,11 @@ window.XFollowCleaner.dashboardUrl = "http://localhost:8788/";
     #xfc-panel section:last-child{border:0}#xfc-panel h3{margin:0 0 9px;font-size:13px}#xfc-panel textarea{width:100%;height:90px;box-sizing:border-box;padding:9px;border:1px solid #cfd9de;border-radius:9px;font:11px/1.4 ui-monospace,monospace;resize:vertical}
     #xfc-panel .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}#xfc-panel button,#xfc-panel a.xfc-btn{border:1px solid #cfd9de;border-radius:999px;padding:7px 11px;background:#fff;color:#0f1419;text-decoration:none;font:700 12px system-ui;cursor:pointer}
     #xfc-panel button.primary{background:#0f1419;color:#fff;border-color:#0f1419}#xfc-panel button.danger{background:#b42318;color:#fff;border-color:#b42318}
+    #xfc-panel button:disabled{cursor:wait;opacity:.55}
     #xfc-panel label{display:flex;flex-direction:column;gap:4px;color:#536471;font-size:11px}#xfc-panel input{width:92px;padding:6px 8px;border:1px solid #cfd9de;border-radius:8px}#xfc-panel input[type=checkbox]{width:auto;padding:0}
-    #xfc-log{min-height:44px;margin-top:10px;padding:9px;border-radius:9px;background:#f7f9f9;color:#536471;white-space:pre-wrap}
+    .xfc-progress{margin-top:9px}.xfc-progress-track{height:7px;overflow:hidden;border-radius:999px;background:#eff3f4}.xfc-progress-bar{display:block;width:0;height:100%;border-radius:inherit;background:#1d9bf0;transition:width .2s ease}.xfc-progress.active.indeterminate .xfc-progress-bar{width:36%;animation:xfc-slide 1.15s ease-in-out infinite}.xfc-progress.complete .xfc-progress-bar{width:100%;background:#2e7d53}.xfc-progress.error .xfc-progress-bar{width:100%;background:#b42318}.xfc-progress.stopped .xfc-progress-bar{background:#b7791f}.xfc-progress small{display:block;margin-top:5px;color:#536471;font-size:10px}
+    @keyframes xfc-slide{from{transform:translateX(-110%)}to{transform:translateX(300%)}}
+    #xfc-log{max-height:150px;min-height:50px;overflow:auto;margin-top:10px;padding:9px;border-radius:9px;background:#f7f9f9;color:#536471;font:10px/1.55 ui-monospace,monospace;white-space:pre-wrap}
   `;
 
   function el(id) {
@@ -814,6 +982,7 @@ window.XFollowCleaner.dashboardUrl = "http://localhost:8788/";
               <h3>1. 导出关注列表（登录态）</h3>
               <textarea id="xfc-following-curl" placeholder="粘贴 Following 的 Copy as cURL (bash)"></textarea>
               <div class="row"><button class="primary" id="xfc-following-start">开始 / 继续导出</button></div>
+              <div class="xfc-progress" id="xfc-following-progress" hidden><div class="xfc-progress-track"><span class="xfc-progress-bar"></span></div><small>等待开始</small></div>
             </section>
             <section>
               <h3>2. 匿名探测公开主页</h3>
@@ -823,6 +992,7 @@ window.XFollowCleaner.dashboardUrl = "http://localhost:8788/";
                 <label><span>范围</span><span><input id="xfc-retry-failed" type="checkbox">重试全部异常</span></label>
               </div>
               <div class="row"><button class="primary" id="xfc-probe-start">开始探测</button><button id="xfc-stop">安全停止</button></div>
+              <div class="xfc-progress" id="xfc-probe-progress" hidden><div class="xfc-progress-track"><span class="xfc-progress-bar"></span></div><small>等待开始</small></div>
             </section>
             <section>
               <h3>3. 筛选与导出</h3>
@@ -837,69 +1007,136 @@ window.XFollowCleaner.dashboardUrl = "http://localhost:8788/";
                 <label>间隔（秒）<input id="xfc-unfollow-delay" type="number" min="1" value="5"></label>
               </div>
               <div class="row"><button class="danger" id="xfc-unfollow-start">确认并执行一批</button></div>
+              <div class="xfc-progress" id="xfc-unfollow-progress" hidden><div class="xfc-progress-track"><span class="xfc-progress-bar"></span></div><small>等待开始</small></div>
             </section>
-            <div id="xfc-log">等待操作。</div>
+            <div id="xfc-log">[XFC] 等待操作。控制台可用 “XFC” 过滤完整日志。</div>
           </main>
         </aside>
       `);
       el("xfc-dashboard").href = app.dashboardUrl;
-      const log = (value) => {
-        el("xfc-log").textContent = value;
-        app.emit("log", { message: value });
+      const logLines = [];
+      const showLog = (detail) => {
+        const time = new Date().toLocaleTimeString();
+        logLines.push(`[${time}][${detail.scope || "UI"}] ${detail.message}`);
+        if (logLines.length > 30) logLines.shift();
+        el("xfc-log").textContent = logLines.join("\n");
+        el("xfc-log").scrollTop = el("xfc-log").scrollHeight;
       };
+      const log = (value, level = "info", scope = "UI") => {
+        app.log(level, scope, value);
+      };
+      const setProgress = (id, update = {}) => {
+        const root = el(id);
+        const phase = update.phase || "progress";
+        const total = Number(update.total);
+        const current = Number(update.current || 0);
+        root.hidden = false;
+        root.className = `xfc-progress ${["complete", "error", "stopped"].includes(phase) ? phase : "active"}`;
+        const knownTotal = Number.isFinite(total) && total > 0;
+        root.classList.toggle("indeterminate", !knownTotal && !["complete", "error", "stopped"].includes(phase));
+        const percent = knownTotal ? Math.min(100, Math.max(0, (current / total) * 100)) : 0;
+        root.querySelector(".xfc-progress-bar").style.width =
+          phase === "complete" ? "100%" : knownTotal ? `${percent}%` : "";
+        root.querySelector("small").textContent = update.message || "处理中…";
+      };
+      const setBusy = (id, busy, busyLabel, normalLabel) => {
+        const button = el(id);
+        button.disabled = busy;
+        button.textContent = busy ? busyLabel : normalLabel;
+      };
+      app.on("log", (event) => showLog(event.detail));
       el("xfc-launch").onclick = () => { el("xfc-panel").hidden = !el("xfc-panel").hidden; };
       el("xfc-close").onclick = () => { el("xfc-panel").hidden = true; };
       el("xfc-following-start").onclick = async () => {
+        setBusy("xfc-following-start", true, "正在导出…", "开始 / 继续导出");
         try {
           const curl = el("xfc-following-curl").value;
           el("xfc-following-curl").value = "";
-          await app.following.start(curl, ({ message }) => log(message));
-          log("关注列表导出完成。");
-        } catch (error) { log(error.message || String(error)); }
+          const dataset = await app.following.start(curl, (update) => setProgress("xfc-following-progress", update));
+          if (dataset.completed_following) {
+            setProgress("xfc-following-progress", {
+              phase: "complete",
+              message: `导出完成，共 ${dataset.accounts.length} 人`,
+              current: dataset.accounts.length,
+              total: dataset.accounts.length
+            });
+            log(`关注列表导出完成，共 ${dataset.accounts.length} 人。`, "info", "Following");
+          }
+        } catch (error) {
+          const message = error.message || String(error);
+          setProgress("xfc-following-progress", { phase: "error", message });
+          log(message, "error", "Following");
+        } finally {
+          setBusy("xfc-following-start", false, "", "开始 / 继续导出");
+        }
       };
       el("xfc-probe-start").onclick = async () => {
+        setBusy("xfc-probe-start", true, "正在探测…", "开始探测");
         try {
           await app.profileProbe.start({
             limit: Number(el("xfc-probe-limit").value),
             intervalMs: Number(el("xfc-probe-delay").value) * 1000,
             retryFailed: el("xfc-retry-failed").checked
-          }, ({ message }) => log(message));
-          log("本轮匿名探测结束。");
-        } catch (error) { log(error.message || String(error)); }
+          }, (update) => setProgress("xfc-probe-progress", update));
+          if (!app.profileProbe.stopRequested) {
+            const progress = el("xfc-probe-progress");
+            const message = progress.querySelector("small").textContent || "本轮匿名探测结束";
+            setProgress("xfc-probe-progress", { phase: "complete", message });
+            log("本轮匿名探测结束。", "info", "ProfileProbe");
+          }
+        } catch (error) {
+          const message = error.message || String(error);
+          setProgress("xfc-probe-progress", { phase: "error", message });
+          log(message, "error", "ProfileProbe");
+        } finally {
+          setBusy("xfc-probe-start", false, "", "开始探测");
+        }
       };
       el("xfc-stop").onclick = () => {
         app.following.stop();
         app.profileProbe.stop();
         app.unfollow.stop();
-        log("已请求安全停止，将在当前请求结束后暂停。");
+        log("已请求安全停止，将在当前请求结束后暂停。", "warn");
       };
       el("xfc-export").onclick = async () => {
         const dataset = await app.loadDataset();
         app.download("x_following_cleaner.csv", app.toCSV(dataset.accounts), "text/csv;charset=utf-8");
+        log(`已导出 CSV，共 ${dataset.accounts.length} 行。`);
       };
       el("xfc-clear-data").onclick = async () => {
         if (!confirm("确认清空关注列表、探测结果和取消队列？请先导出 CSV 备份。")) return;
         await app.gmDelete(app.constants.DATASET_KEY);
         await app.gmDelete(app.constants.UNFOLLOW_QUEUE_KEY);
-        log("本地关注数据和取消队列已清空。");
+        log("本地关注数据和取消队列已清空。", "warn");
       };
       el("xfc-save-destroy").onclick = async () => {
         try {
           await app.unfollow.saveTemplate(el("xfc-destroy-curl").value);
           el("xfc-destroy-curl").value = "";
           log("destroy.json 请求模板已保存，不保存 Cookie 和 ct0。");
-        } catch (error) { log(error.message || String(error)); }
+        } catch (error) { log(error.message || String(error), "error", "Unfollow"); }
       };
       el("xfc-unfollow-start").onclick = async () => {
         const size = Number(el("xfc-batch-size").value);
         if (!confirm(`确认执行最多 ${size} 个取消关注请求？`)) return;
+        setBusy("xfc-unfollow-start", true, "正在执行…", "确认并执行一批");
         try {
           await app.unfollow.start({
             batchSize: size,
             intervalMs: Number(el("xfc-unfollow-delay").value) * 1000
-          }, ({ message }) => log(message));
-          log("本批取消关注执行结束。");
-        } catch (error) { log(error.message || String(error)); }
+          }, (update) => setProgress("xfc-unfollow-progress", update));
+          if (!app.unfollow.stopRequested) {
+            const message = el("xfc-unfollow-progress").querySelector("small").textContent;
+            setProgress("xfc-unfollow-progress", { phase: "complete", message });
+            log("本批取消关注执行结束。", "info", "Unfollow");
+          }
+        } catch (error) {
+          const message = error.message || String(error);
+          setProgress("xfc-unfollow-progress", { phase: "error", message });
+          log(message, "error", "Unfollow");
+        } finally {
+          setBusy("xfc-unfollow-start", false, "", "确认并执行一批");
+        }
       };
     }
   };

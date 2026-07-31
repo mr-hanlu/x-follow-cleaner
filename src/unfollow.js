@@ -72,11 +72,31 @@
       const map = new Map(dataset.accounts.map((account) => [String(account.account_id), account]));
       this.running = true;
       this.stopRequested = false;
+      onProgress({
+        phase: "start",
+        message: `取消关注任务准备完成，本批 ${targets.length} 人`,
+        current: 0,
+        total: targets.length
+      });
+      app.log("info", "Unfollow", "任务开始", {
+        batch_size: targets.length,
+        interval_ms: intervalMs
+      });
 
       try {
         for (let index = 0; index < targets.length; index += 1) {
           if (this.stopRequested) break;
           const target = targets[index];
+          onProgress({
+            phase: "request",
+            message: `正在处理 ${index + 1}/${targets.length}：@${target.screen_name || target.account_id}`,
+            current: index,
+            total: targets.length
+          });
+          app.log("info", "Unfollow", `请求 @${target.screen_name || target.account_id}`, {
+            current: index + 1,
+            total: targets.length
+          });
           const headers = {
             ...template.headers,
             "content-type": "application/x-www-form-urlencoded",
@@ -114,13 +134,37 @@
           await app.gmSet(app.constants.UNFOLLOW_QUEUE_KEY, queue);
           await app.saveDataset(dataset);
           onProgress({
+            phase: index + 1 === targets.length ? "complete" : "progress",
             message: `取消关注 ${index + 1}/${targets.length}：@${target.screen_name || target.account_id} ${status}`,
+            current: index + 1,
+            total: targets.length
+          });
+          app.log(status === "success" ? "info" : "warn", "Unfollow", `@${target.screen_name || target.account_id} ${status}`, {
+            http_status: httpStatus,
             current: index + 1,
             total: targets.length
           });
           if (index + 1 < targets.length) await app.sleep(intervalMs);
         }
+        if (this.stopRequested) {
+          const completed = targets.filter((target) =>
+            queue.find((item) => item.account_id === target.account_id)?.status === "success"
+          ).length;
+          onProgress({
+            phase: "stopped",
+            message: `已安全停止；本批成功 ${completed}/${targets.length}`,
+            current: completed,
+            total: targets.length
+          });
+          app.log("warn", "Unfollow", "用户请求停止", {
+            completed,
+            total: targets.length
+          });
+        }
         return queue;
+      } catch (error) {
+        app.log("error", "Unfollow", error.message || String(error));
+        throw error;
       } finally {
         this.running = false;
       }

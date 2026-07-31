@@ -37,6 +37,17 @@
   app.sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   app.nowIso = () => new Date().toISOString();
 
+  app.log = function (level, scope, message, details) {
+    const normalizedLevel = ["debug", "info", "warn", "error"].includes(level)
+      ? level
+      : "info";
+    const prefix = `[XFC][${scope}][${new Date().toLocaleTimeString()}]`;
+    const method = normalizedLevel === "debug" ? "debug" : normalizedLevel;
+    if (details === undefined) console[method](`${prefix} ${message}`);
+    else console[method](`${prefix} ${message}`, details);
+    app.emit("log", { level: normalizedLevel, scope, message, details });
+  };
+
   app.gmGet = async function (key, fallback) {
     const value = await Promise.resolve(GM_getValue(key, fallback));
     return value == null ? fallback : value;

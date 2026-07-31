@@ -5,6 +5,10 @@
 
       window.addEventListener("xfc:request-dataset", async () => {
         const dataset = await app.loadDataset();
+        app.log("info", "Bridge", "向筛选页面发送数据集", {
+          accounts: dataset.accounts.length,
+          updated_at: dataset.updated_at
+        });
         window.dispatchEvent(
           new CustomEvent("xfc:dataset", {
             detail: {
@@ -30,6 +34,10 @@
         const queue = await app.unfollow.queueAccounts(
           dataset.accounts.filter((account) => account.review_status === "remove")
         );
+        app.log("info", "Bridge", "审核标记已写回", {
+          reviews: reviews.length,
+          queued: queue.filter((item) => item.status !== "success").length
+        });
         window.dispatchEvent(
           new CustomEvent("xfc:reviews-saved", {
             detail: { saved: reviews.length, queued: queue.filter((item) => item.status !== "success").length }
@@ -38,6 +46,9 @@
       });
 
       window.dispatchEvent(new CustomEvent("xfc:bridge-ready"));
+      app.log("info", "Bridge", "筛选页面数据桥已就绪", {
+        origin: location.origin
+      });
     }
   };
 })(window.XFollowCleaner);

@@ -13,8 +13,12 @@ execFileSync(process.execPath, [path.join(root, "scripts", "build.mjs")], {
 });
 const bundle = fs.readFileSync(path.join(root, "dist", "x-follow-cleaner.user.js"), "utf8");
 assert.match(bundle, /@match\s+https:\/\/clean\.example\.com\/\*/);
+assert.match(bundle, /@icon\s+https:\/\/clean\.example\.com\/favicon\.svg/);
+assert.match(bundle, /@updateURL\s+https:\/\/clean\.example\.com\/download\/x-follow-cleaner\.user\.js/);
 assert.match(bundle, /anonymous:\s*true/);
 assert.doesNotMatch(bundle, /__DASHBOARD_MATCH__/);
+assert.doesNotMatch(bundle, /__DASHBOARD_(URL|ICON)__/);
+assert.doesNotMatch(bundle, /__USERSCRIPT_URL__/);
 
 const core = fs.readFileSync(path.join(root, "src", "core.js"), "utf8");
 const context = {

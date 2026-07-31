@@ -31,7 +31,7 @@ web/download/        页面提供下载的油猴安装文件
 
 ```bash
 cd x-follow-cleaner
-DASHBOARD_URL="https://你的正式域名/" npm run build
+npm run build
 npm test
 ```
 
@@ -42,7 +42,13 @@ dist/x-follow-cleaner.user.js
 web/download/x-follow-cleaner.user.js
 ```
 
-`DASHBOARD_URL` 很重要：油猴必须提前声明允许在哪个筛选页面运行。本地默认值是 `http://localhost:8788/`，正式发布必须改成实际域名并重新构建。
+正式地址已经写入 `.env.production`：
+
+```text
+DASHBOARD_URL=https://x-follow-cleaner.mrhanlu224.workers.dev/
+```
+
+油猴必须提前声明允许在哪个筛选页面运行。`npm run build` 会读取这个生产环境变量并生成正式版本；需要本地联调时使用 `npm run build:local`，生成匹配 `http://localhost:8788/` 的临时版本。
 
 ## 本地预览静态页面
 
@@ -62,17 +68,44 @@ python3 -m http.server 8788
 - Root directory：`x-follow-cleaner`
 - Build command：`npm run build`
 - Build output directory：`web`
-- 环境变量：`DASHBOARD_URL=https://你的正式域名/`
+- 环境变量：`DASHBOARD_URL=https://x-follow-cleaner.mrhanlu224.workers.dev/`
 
 部署完成后，访问：
 
 ```text
-https://你的正式域名/download/x-follow-cleaner.user.js
+https://x-follow-cleaner.mrhanlu224.workers.dev/download/x-follow-cleaner.user.js
 ```
 
 即可安装与当前筛选页域名匹配的油猴脚本。
 
 如果使用 Cloudflare 自动生成的预览域名，每次预览域名可能不同，油猴不会自动获得新的 `@match`。日常使用应绑定一个固定的正式域名。
+
+## Greasy Fork 发布与自动同步
+
+Greasy Fork 首次发布必须由账号所有者登录确认，不能只凭个人主页地址从外部直接创建脚本。首次导入完成后可以自动同步更新。
+
+推荐使用项目 GitHub 仓库中的构建产物作为同步源：
+
+```text
+https://raw.githubusercontent.com/mr-hanlu/x-follow-cleaner/main/web/download/x-follow-cleaner.user.js
+```
+
+操作流程：
+
+1. 登录 `Mr Hanlu` 的 Greasy Fork 账号；
+2. 打开 `https://greasyfork.org/zh-CN/import`；
+3. 填入上面的 Raw URL；
+4. 同步方式选择“自动”；
+5. 完成首次导入和脚本说明；
+6. 在脚本管理页面按 Greasy Fork 提示配置 GitHub Webhook，可在仓库 push 后更快同步。
+
+后续发布前必须：
+
+1. 修改 `src/metadata.txt` 中的 `@version`；
+2. 执行 `npm test && npm run build`；
+3. 将源码以及 `web/download/x-follow-cleaner.user.js` 一起提交并推送到 `main`。
+
+Greasy Fork 会定期读取 Raw URL；配置 GitHub Webhook 后可由 push 触发同步。直接从 Greasy Fork 安装的版本，其更新地址会被 Greasy Fork自动改写为 Greasy Fork 自己的地址。
 
 ## 使用流程
 
@@ -86,6 +119,18 @@ https://你的正式域名/download/x-follow-cleaner.user.js
 8. 回到 X，复制一次 `friendships/destroy.json` cURL 并保存模板；
 9. 设置本批数量和请求间隔，明确确认后执行一批；
 10. 随时保存进度 CSV。
+
+## 进度与日志
+
+三个长任务都有独立进度条：
+
+- Following 总人数在接口结束前未知，因此导出过程中显示活动进度，并显示当前页数与累计人数；
+- 匿名主页探测显示 `已完成 / 本轮总数`；
+- 取消关注显示 `已完成 / 本批总数`。
+
+按钮在任务运行时会禁用并显示“正在导出/探测/执行”，完成、停止和失败会使用不同的进度条状态。打开浏览器开发者工具 Console，使用 `XFC` 过滤即可查看带时间、模块、HTTP 状态和数量的日志。日志不会打印 cURL、Cookie、`ct0` 或 Authorization。
+
+筛选页面的“从油猴同步”和“发送待取消队列”也有运行提示；5 秒没有收到油猴数据桥响应时会明确显示超时原因。
 
 ## 请求隔离
 

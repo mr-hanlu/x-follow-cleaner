@@ -92,6 +92,16 @@
       let page = Number(dataset.following_page || 0);
       this.running = true;
       this.stopRequested = false;
+      onProgress({
+        phase: "start",
+        message: `正在准备关注列表导出；已有 ${dataset.accounts.length} 人，第 ${page + 1} 页即将请求`,
+        current: dataset.accounts.length,
+        page
+      });
+      app.log("info", "Following", "任务开始", {
+        existing_accounts: dataset.accounts.length,
+        next_page: page + 1
+      });
 
       try {
         while (!this.stopRequested && !dataset.completed_following) {
@@ -112,7 +122,22 @@
           if (parsed.headers["x-client-transaction-id"]) {
             headers["x-client-transaction-id"] = parsed.headers["x-client-transaction-id"];
           }
+          onProgress({
+            phase: "request",
+            message: `正在请求关注列表第 ${page + 1} 页…`,
+            current: dataset.accounts.length,
+            page
+          });
+          app.log("info", "Following", `请求第 ${page + 1} 页`, {
+            saved_accounts: dataset.accounts.length,
+            has_cursor: Boolean(cursor)
+          });
           const response = await fetch(url, { method: "GET", credentials: "include", headers });
+          app.log(
+            response.ok ? "info" : "warn",
+            "Following",
+            `第 ${page + 1} 页返回 HTTP ${response.status}`
+          );
           if (response.status === 429) {
             throw new Error("Following 遇到 429，已保存进度并停止，请稍后继续。");
           }
@@ -131,12 +156,34 @@
             !cursor || cursor === previousCursor || incoming.length === 0;
           await app.saveDataset(dataset);
           onProgress({
+            phase: dataset.completed_following ? "complete" : "progress",
             message: `关注列表第 ${page} 页：本页 ${incoming.length} 人，累计 ${dataset.accounts.length} 人`,
-            current: dataset.accounts.length
+            current: dataset.accounts.length,
+            page
+          });
+          app.log("info", "Following", `第 ${page} 页保存完成`, {
+            page_accounts: incoming.length,
+            total_accounts: dataset.accounts.length,
+            completed: dataset.completed_following
           });
           if (!dataset.completed_following) await app.sleep(900 + Math.random() * 600);
         }
+        if (this.stopRequested) {
+          onProgress({
+            phase: "stopped",
+            message: `已安全停止；当前保存 ${dataset.accounts.length} 人，可稍后继续`,
+            current: dataset.accounts.length,
+            page
+          });
+          app.log("warn", "Following", "用户请求停止", {
+            saved_accounts: dataset.accounts.length,
+            page
+          });
+        }
         return dataset;
+      } catch (error) {
+        app.log("error", "Following", error.message || String(error));
+        throw error;
       } finally {
         this.running = false;
       }

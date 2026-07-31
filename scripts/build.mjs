@@ -7,9 +7,17 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourceDir = path.join(root, "src");
 const output = path.join(root, "dist", "x-follow-cleaner.user.js");
 const webOutput = path.join(root, "web", "download", "x-follow-cleaner.user.js");
-const dashboardUrl = (process.env.DASHBOARD_URL || "http://localhost:8788/").trim();
+const dashboardUrl = (
+  process.env.DASHBOARD_URL ||
+  "https://x-follow-cleaner.mrhanlu224.workers.dev/"
+).trim();
 const dashboard = new URL(dashboardUrl);
 const dashboardMatch = `${dashboard.protocol}//${dashboard.hostname}/*`;
+const dashboardIcon = new URL("favicon.svg", dashboard).toString();
+const userscriptUrl = new URL(
+  "download/x-follow-cleaner.user.js",
+  dashboard
+).toString();
 
 const modules = [
   "core.js",
@@ -24,7 +32,10 @@ const modules = [
 
 const metadata = fs
   .readFileSync(path.join(sourceDir, "metadata.txt"), "utf8")
-  .replace("__DASHBOARD_MATCH__", dashboardMatch);
+  .replaceAll("__DASHBOARD_MATCH__", dashboardMatch)
+  .replaceAll("__DASHBOARD_URL__", dashboard.toString())
+  .replaceAll("__DASHBOARD_ICON__", dashboardIcon)
+  .replaceAll("__USERSCRIPT_URL__", userscriptUrl);
 const body = modules
   .map((name) => `\n/* ---- ${name} ---- */\n${fs.readFileSync(path.join(sourceDir, name), "utf8")}`)
   .join("\n");
@@ -36,3 +47,4 @@ fs.writeFileSync(output, bundle);
 fs.writeFileSync(webOutput, bundle);
 console.log(`Built ${path.relative(root, output)}`);
 console.log(`Dashboard match: ${dashboardMatch}`);
+console.log(`Userscript URL: ${userscriptUrl}`);
