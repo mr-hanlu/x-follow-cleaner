@@ -13,6 +13,7 @@
           new CustomEvent("xfc:dataset", {
             detail: {
               schema_version: dataset.schema_version,
+              source_user_id: dataset.source_user_id,
               updated_at: dataset.updated_at,
               accounts: dataset.accounts
             }
@@ -23,6 +24,22 @@
       window.addEventListener("xfc:save-reviews", async (event) => {
         const reviews = Array.isArray(event.detail?.reviews) ? event.detail.reviews : [];
         const dataset = await app.loadDataset();
+        const requestedSource = String(event.detail?.source_user_id || "");
+        if (
+          requestedSource &&
+          requestedSource !== String(dataset.source_user_id || "")
+        ) {
+          app.log("error", "Bridge", "拒绝写入其他账号的审核标记", {
+            requested_source: requestedSource,
+            active_source: dataset.source_user_id
+          });
+          window.dispatchEvent(
+            new CustomEvent("xfc:reviews-error", {
+              detail: { message: "账号已切换，请重新从油猴同步后再发送队列。" }
+            })
+          );
+          return;
+        }
         const map = new Map(dataset.accounts.map((account) => [String(account.account_id), account]));
         for (const review of reviews) {
           const id = String(review.account_id || "");

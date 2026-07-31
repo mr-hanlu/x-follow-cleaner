@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X 关注清理助手
 // @namespace    https://github.com/local/x-follow-cleaner
-// @version      0.2.0
+// @version      0.4.0
 // @description  导出关注列表、匿名探测公开主页活跃时间，并按确认队列分批取消关注。
 // @author       Mr Hanlu
 // @match        https://x.com/*
@@ -15,6 +15,7 @@
 // @grant        GM_setValue
 // @grant        GM_deleteValue
 // @grant        GM_registerMenuCommand
+// @grant        GM_addValueChangeListener
 // @grant        GM_xmlhttpRequest
 // @connect      x.com
 // @noframes
@@ -29,15 +30,23 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
 /* ---- core.js ---- */
 (function (app) {
   const DATASET_KEY = "xfc:dataset:v1";
+  const ACTIVE_SOURCE_KEY = "xfc:active-source:v1";
+  const DATASET_PREFIX = "xfc:dataset:v2:";
   const UNFOLLOW_TEMPLATE_KEY = "xfc:unfollow-template:v1";
+  const UNFOLLOW_TEMPLATE_PREFIX = "xfc:unfollow-template:v2:";
   const UNFOLLOW_QUEUE_KEY = "xfc:unfollow-queue:v1";
+  const UNFOLLOW_QUEUE_PREFIX = "xfc:unfollow-queue:v2:";
   const SETTINGS_KEY = "xfc:settings:v1";
   const TWITTER_EPOCH_MS = 1288834974657n;
 
   app.constants = {
     DATASET_KEY,
+    ACTIVE_SOURCE_KEY,
+    DATASET_PREFIX,
     UNFOLLOW_TEMPLATE_KEY,
+    UNFOLLOW_TEMPLATE_PREFIX,
     UNFOLLOW_QUEUE_KEY,
+    UNFOLLOW_QUEUE_PREFIX,
     SETTINGS_KEY,
     TWITTER_EPOCH_MS,
     columns: [
@@ -101,31 +110,128 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
     return "";
   };
 
-  app.emptyDataset = function () {
+  app.getLoggedAccountId = function () {
+    const twid = app.getCookie("twid");
+    const match = /u=(\d+)/.exec(twid) || /u%3D(\d+)/i.exec(twid);
+    return match?.[1] || "";
+  };
+
+  app.datasetKey = (sourceUserId) => `${DATASET_PREFIX}${sourceUserId}`;
+  app.queueKey = (sourceUserId) => `${UNFOLLOW_QUEUE_PREFIX}${sourceUserId}`;
+  app.templateKey = (sourceUserId) => `${UNFOLLOW_TEMPLATE_PREFIX}${sourceUserId}`;
+
+  app.getActiveSourceId = async function () {
+    return String(await app.gmGet(ACTIVE_SOURCE_KEY, "") || "");
+  };
+
+  app.setActiveSourceId = async function (sourceUserId) {
+    const value = String(sourceUserId || "");
+    if (!/^\d+$/.test(value)) throw new Error("无效的源账号 ID。");
+    await app.gmSet(ACTIVE_SOURCE_KEY, value);
+    return value;
+  };
+
+  app.emptyDataset = function (sourceUserId = "") {
     return {
       schema_version: "x-follow-cleaner-v1",
-      source_user_id: "",
+      source_user_id: String(sourceUserId || ""),
       updated_at: app.nowIso(),
       completed_following: false,
       accounts: []
     };
   };
 
-  app.loadDataset = async function () {
-    const dataset = await app.gmGet(DATASET_KEY, null);
-    if (!dataset || !Array.isArray(dataset.accounts)) return app.emptyDataset();
-    return dataset;
+  app.loadDataset = async function (sourceUserId = "") {
+    let resolvedSource = String(sourceUserId || "");
+    if (!resolvedSource) resolvedSource = await app.getActiveSourceId();
+    if (resolvedSource) {
+      const isolated = await app.gmGet(app.datasetKey(resolvedSource), null);
+      if (isolated && Array.isArray(isolated.accounts)) return isolated;
+    }
+
+    const legacy = await app.gmGet(DATASET_KEY, null);
+    if (legacy && Array.isArray(legacy.accounts) && legacy.source_user_id) {
+      const legacySource = String(legacy.source_user_id);
+      if (!resolvedSource || resolvedSource === legacySource) {
+        await app.gmSet(app.datasetKey(legacySource), legacy);
+        await app.setActiveSourceId(legacySource);
+        const legacyQueue = await app.gmGet(UNFOLLOW_QUEUE_KEY, null);
+        if (Array.isArray(legacyQueue)) {
+          await app.gmSet(app.queueKey(legacySource), legacyQueue);
+        }
+        const legacyTemplate = await app.gmGet(UNFOLLOW_TEMPLATE_KEY, null);
+        if (legacyTemplate) {
+          await app.gmSet(app.templateKey(legacySource), legacyTemplate);
+        }
+        await app.gmDelete(DATASET_KEY);
+        await app.gmDelete(UNFOLLOW_QUEUE_KEY);
+        await app.gmDelete(UNFOLLOW_TEMPLATE_KEY);
+        app.log("info", "Storage", "旧版数据已迁移到账号隔离存储", {
+          source_user_id: legacySource,
+          accounts: legacy.accounts.length
+        });
+        return legacy;
+      }
+    }
+    return app.emptyDataset(resolvedSource);
   };
 
   app.saveDataset = async function (dataset) {
+    const sourceUserId = String(dataset.source_user_id || "");
+    if (!/^\d+$/.test(sourceUserId)) {
+      throw new Error("数据集缺少有效 source_user_id，无法保存。");
+    }
     dataset.schema_version = "x-follow-cleaner-v1";
     dataset.updated_at = app.nowIso();
-    await app.gmSet(DATASET_KEY, dataset);
+    await app.setActiveSourceId(sourceUserId);
+    await app.gmSet(app.datasetKey(sourceUserId), dataset);
     app.emit("dataset", {
       total: dataset.accounts.length,
       updated_at: dataset.updated_at
     });
     return dataset;
+  };
+
+  app.loadUnfollowQueue = async function (sourceUserId = "") {
+    const resolvedSource = String(sourceUserId || await app.getActiveSourceId());
+    if (!resolvedSource) return [];
+    const queue = await app.gmGet(app.queueKey(resolvedSource), null);
+    if (Array.isArray(queue)) return queue;
+    return [];
+  };
+
+  app.saveUnfollowQueue = async function (queue, sourceUserId = "") {
+    const resolvedSource = String(sourceUserId || await app.getActiveSourceId());
+    if (!/^\d+$/.test(resolvedSource)) {
+      throw new Error("没有活动账号，无法保存取消队列。");
+    }
+    await app.gmSet(app.queueKey(resolvedSource), queue);
+    return queue;
+  };
+
+  app.loadUnfollowTemplate = async function (sourceUserId = "") {
+    const resolvedSource = String(sourceUserId || await app.getActiveSourceId());
+    if (!resolvedSource) return null;
+    return app.gmGet(app.templateKey(resolvedSource), null);
+  };
+
+  app.saveUnfollowTemplate = async function (template, sourceUserId = "") {
+    const resolvedSource = String(sourceUserId || await app.getActiveSourceId());
+    if (!/^\d+$/.test(resolvedSource)) {
+      throw new Error("没有活动账号，无法保存取消请求模板。");
+    }
+    await app.gmSet(app.templateKey(resolvedSource), template);
+    return template;
+  };
+
+  app.clearActiveData = async function () {
+    const sourceUserId = await app.getActiveSourceId();
+    if (!sourceUserId) return "";
+    await app.gmDelete(app.datasetKey(sourceUserId));
+    await app.gmDelete(app.queueKey(sourceUserId));
+    await app.gmDelete(app.templateKey(sourceUserId));
+    await app.gmDelete(ACTIVE_SOURCE_KEY);
+    return sourceUserId;
   };
 
   app.upsertAccounts = function (dataset, incoming) {
@@ -385,10 +491,8 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
       const csrf = app.getCookie("ct0");
       if (!csrf) throw new Error("没有读取到 ct0，请确认当前已登录 X。");
 
-      let dataset = await app.loadDataset();
-      if (dataset.source_user_id && dataset.source_user_id !== sourceUserId) {
-        throw new Error("现有数据属于另一个 X 账号，请先在面板中清空数据。");
-      }
+      await app.setActiveSourceId(sourceUserId);
+      let dataset = await app.loadDataset(sourceUserId);
       dataset.source_user_id = sourceUserId;
       let cursor = dataset.following_cursor || "";
       let page = Number(dataset.following_page || 0);
@@ -583,6 +687,7 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
       if (!dataset.accounts.length) throw new Error("请先导出关注列表。");
       const intervalMs = Math.max(500, Number(options.intervalMs || 3000));
       const limit = Math.max(0, Number(options.limit || 0));
+      const concurrency = Math.min(8, Math.max(1, Number(options.concurrency || 1)));
       const retryFailed = Boolean(options.retryFailed);
       const transient = new Set(["rate_limited", "request_error", "parse_error"]);
       let targets = dataset.accounts.filter((account) =>
@@ -593,36 +698,103 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
             String(account.data_status || "").startsWith("http_")
       );
       if (limit) targets = targets.slice(0, limit);
+      const overallTotal = dataset.accounts.length;
+      const overallCompleted = () =>
+        dataset.accounts.filter((account) => Boolean(account.fetched_at)).length;
       this.running = true;
       this.stopRequested = false;
       let completed = 0;
+      let nextTargetIndex = 0;
+      let fatalError = null;
+      let saveChain = Promise.resolve();
+      dataset.profile_probe = {
+        status: targets.length ? "running" : "complete",
+        completed: overallCompleted(),
+        total: overallTotal,
+        batch_completed: 0,
+        batch_total: targets.length,
+        concurrency,
+        interval_ms: intervalMs,
+        started_at: app.nowIso(),
+        updated_at: app.nowIso()
+      };
+      await app.saveDataset(dataset);
       onProgress({
         phase: targets.length ? "start" : "complete",
         message: targets.length
-          ? `匿名探测准备完成，共 ${targets.length} 个账号`
-          : "没有需要探测的账号",
-        current: 0,
-        total: targets.length
+          ? `整体已探测 ${overallCompleted()}/${overallTotal} · 本轮 ${targets.length} · 并发 ${concurrency}`
+          : `已探测 ${overallCompleted()}/${overallTotal}，没有待处理账号`,
+        current: overallCompleted(),
+        total: overallTotal,
+        batch_current: 0,
+        batch_total: targets.length
       });
       app.log("info", "ProfileProbe", "任务开始", {
         targets: targets.length,
         interval_ms: intervalMs,
+        concurrency,
         retry_failed: retryFailed
       });
 
-      try {
-        for (const target of targets) {
-          if (this.stopRequested) break;
+      const commitResult = (target, result) => {
+        saveChain = saveChain.then(async () => {
+          app.upsertAccounts(dataset, [result]);
+          const currentOverall = overallCompleted();
+          dataset.profile_probe = {
+            ...dataset.profile_probe,
+            status: "running",
+            completed: currentOverall,
+            total: overallTotal,
+            batch_completed: completed + 1,
+            current_screen_name: target.screen_name,
+            updated_at: app.nowIso()
+          };
+          await app.saveDataset(dataset);
+          completed += 1;
+          onProgress({
+            phase: "progress",
+            message: `已探测 ${currentOverall}/${overallTotal} · 本轮 ${completed}/${targets.length}：@${target.screen_name} ${result.data_status}`,
+            current: currentOverall,
+            total: overallTotal,
+            batch_current: completed,
+            batch_total: targets.length
+          });
+          app.log(
+            result.data_status === "ok" ? "info" : "warn",
+            "ProfileProbe",
+            `@${target.screen_name} ${result.data_status}`,
+            { current: completed, total: targets.length, concurrency }
+          );
+        });
+        return saveChain;
+      };
+
+      const worker = async (workerIndex) => {
+        if (workerIndex > 0) {
+          await app.sleep(
+            workerIndex * Math.min(250, Math.max(60, intervalMs / concurrency))
+          );
+        }
+        while (!this.stopRequested && !fatalError) {
+          const targetIndex = nextTargetIndex;
+          nextTargetIndex += 1;
+          if (targetIndex >= targets.length) return;
+          const target = targets[targetIndex];
           let result;
           onProgress({
             phase: "request",
-            message: `正在请求 ${completed + 1}/${targets.length}：@${target.screen_name}`,
-            current: completed,
-            total: targets.length
+            message: `已探测 ${overallCompleted()}/${overallTotal} · 正在请求本轮 ${targetIndex + 1}/${targets.length}：@${target.screen_name}`,
+            current: overallCompleted(),
+            total: overallTotal,
+            batch_current: completed,
+            batch_total: targets.length,
+            active: Math.min(concurrency, targets.length - completed)
           });
-          app.log("info", "ProfileProbe", `请求 @${target.screen_name}`, {
-            current: completed + 1,
+          app.log("info", "ProfileProbe", `工作槽 ${workerIndex + 1} 请求 @${target.screen_name}`, {
+            scheduled: targetIndex + 1,
+            completed,
             total: targets.length,
+            concurrency,
             anonymous: true
           });
           try {
@@ -636,9 +808,9 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
                 data_status: "rate_limited",
                 fetched_at: app.nowIso()
               };
-              app.upsertAccounts(dataset, [result]);
-              await app.saveDataset(dataset);
-              throw new Error("匿名主页请求遇到 429，已保存进度并停止。");
+              await commitResult(target, result);
+              fatalError = new Error("匿名主页请求遇到 429，已保存进度并停止。");
+              return;
             }
             if (response.status !== 200) {
               result = {
@@ -657,39 +829,78 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
               fetched_at: app.nowIso()
             };
           }
-          app.upsertAccounts(dataset, [result]);
-          await app.saveDataset(dataset);
-          completed += 1;
-          onProgress({
-            phase: completed === targets.length ? "complete" : "progress",
-            message: `匿名探测 ${completed}/${targets.length}：@${target.screen_name} ${result.data_status}`,
-            current: completed,
-            total: targets.length
-          });
-          app.log(
-            result.data_status === "ok" ? "info" : "warn",
-            "ProfileProbe",
-            `@${target.screen_name} ${result.data_status}`,
-            { current: completed, total: targets.length }
-          );
-          if (completed < targets.length) {
+          await commitResult(target, result);
+          if (
+            !this.stopRequested &&
+            !fatalError &&
+            nextTargetIndex < targets.length
+          ) {
             await app.sleep(intervalMs + Math.random() * Math.min(intervalMs * 0.35, 1500));
           }
         }
+      };
+
+      try {
+        const workerCount = Math.min(concurrency, Math.max(1, targets.length));
+        await Promise.all(
+          Array.from({ length: workerCount }, (_, index) => worker(index))
+        );
+        await saveChain;
+        if (fatalError) throw fatalError;
         if (this.stopRequested) {
+          dataset.profile_probe = {
+            ...dataset.profile_probe,
+            status: "paused",
+            completed: overallCompleted(),
+            batch_completed: completed,
+            updated_at: app.nowIso()
+          };
+          await app.saveDataset(dataset);
           onProgress({
             phase: "stopped",
-            message: `已安全停止；本轮完成 ${completed}/${targets.length}`,
-            current: completed,
-            total: targets.length
+            message: `已暂停 · 整体已探测 ${overallCompleted()}/${overallTotal} · 本轮完成 ${completed}/${targets.length}`,
+            current: overallCompleted(),
+            total: overallTotal,
+            batch_current: completed,
+            batch_total: targets.length
           });
           app.log("warn", "ProfileProbe", "用户请求停止", {
             completed,
             total: targets.length
           });
+        } else {
+          const currentOverall = overallCompleted();
+          const allAttempted = currentOverall >= overallTotal;
+          dataset.profile_probe = {
+            ...dataset.profile_probe,
+            status: allAttempted ? "complete" : "paused",
+            completed: currentOverall,
+            batch_completed: completed,
+            updated_at: app.nowIso()
+          };
+          await app.saveDataset(dataset);
+          onProgress({
+            phase: allAttempted ? "complete" : "stopped",
+            message: allAttempted
+              ? `探测完成 · 已探测 ${currentOverall}/${overallTotal}`
+              : `本轮结束 · 整体已探测 ${currentOverall}/${overallTotal} · 本轮 ${completed}/${targets.length}`,
+            current: currentOverall,
+            total: overallTotal,
+            batch_current: completed,
+            batch_total: targets.length
+          });
         }
         return dataset;
       } catch (error) {
+        dataset.profile_probe = {
+          ...dataset.profile_probe,
+          status: "error",
+          completed: overallCompleted(),
+          batch_completed: completed,
+          error: error.message || String(error),
+          updated_at: app.nowIso()
+        };
+        await app.saveDataset(dataset);
         app.log("error", "ProfileProbe", error.message || String(error), {
           completed,
           total: targets.length
@@ -742,12 +953,14 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
 
     async saveTemplate(curlText) {
       const template = sanitizedTemplate(curlText);
-      await app.gmSet(app.constants.UNFOLLOW_TEMPLATE_KEY, template);
+      await app.saveUnfollowTemplate(template);
       return template;
     },
 
     async queueAccounts(accounts) {
       const dataset = await app.loadDataset();
+      const sourceUserId = String(dataset.source_user_id || "");
+      if (!sourceUserId) throw new Error("没有活动账号，无法建立取消队列。");
       const known = new Map(dataset.accounts.map((account) => [String(account.account_id), account]));
       const queue = [];
       for (const value of accounts) {
@@ -762,23 +975,36 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
         });
       }
       await app.saveDataset(dataset);
-      await app.gmSet(app.constants.UNFOLLOW_QUEUE_KEY, queue);
+      await app.saveUnfollowQueue(queue, sourceUserId);
       return queue;
     },
 
     async start(options = {}, onProgress = () => {}) {
       if (this.running) throw new Error("取消关注任务已经在运行。");
       if (location.hostname !== "x.com") throw new Error("请在 x.com 页面执行取消关注。");
-      const template = await app.gmGet(app.constants.UNFOLLOW_TEMPLATE_KEY, null);
-      if (!template) throw new Error("请先粘贴并保存 destroy.json cURL。");
       const csrf = app.getCookie("ct0");
       if (!csrf) throw new Error("没有读取到 ct0，请确认已登录 X。");
-      let queue = await app.gmGet(app.constants.UNFOLLOW_QUEUE_KEY, []);
+      const dataset = await app.loadDataset();
+      const sourceUserId = String(dataset.source_user_id || "");
+      if (!sourceUserId) throw new Error("没有活动账号，请先导出当前账号的关注列表。");
+      const template = await app.loadUnfollowTemplate(sourceUserId);
+      if (!template) throw new Error("请先为当前账号粘贴并保存 destroy.json cURL。");
+      const loggedAccountId = app.getLoggedAccountId();
+      if (loggedAccountId && loggedAccountId !== sourceUserId) {
+        throw new Error(
+          `账号不匹配：当前登录账号是 ${loggedAccountId}，取消队列属于 ${sourceUserId}。`
+        );
+      }
+      if (!loggedAccountId) {
+        app.log("warn", "Unfollow", "无法从 twid 读取当前登录账号 ID，请确认队列属于当前账号。", {
+          source_user_id: sourceUserId
+        });
+      }
+      let queue = await app.loadUnfollowQueue(sourceUserId);
       const batchSize = Math.min(50, Math.max(1, Number(options.batchSize || 10)));
       const intervalMs = Math.max(1000, Number(options.intervalMs || 5000));
       const targets = queue.filter((item) => item.status !== "success").slice(0, batchSize);
       if (!targets.length) throw new Error("没有待取消账号。");
-      let dataset = await app.loadDataset();
       const map = new Map(dataset.accounts.map((account) => [String(account.account_id), account]));
       this.running = true;
       this.stopRequested = false;
@@ -841,7 +1067,7 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
               account.review_status = "done";
             }
           }
-          await app.gmSet(app.constants.UNFOLLOW_QUEUE_KEY, queue);
+          await app.saveUnfollowQueue(queue, sourceUserId);
           await app.saveDataset(dataset);
           onProgress({
             phase: index + 1 === targets.length ? "complete" : "progress",
@@ -903,6 +1129,7 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
           new CustomEvent("xfc:dataset", {
             detail: {
               schema_version: dataset.schema_version,
+              source_user_id: dataset.source_user_id,
               updated_at: dataset.updated_at,
               accounts: dataset.accounts
             }
@@ -913,6 +1140,22 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
       window.addEventListener("xfc:save-reviews", async (event) => {
         const reviews = Array.isArray(event.detail?.reviews) ? event.detail.reviews : [];
         const dataset = await app.loadDataset();
+        const requestedSource = String(event.detail?.source_user_id || "");
+        if (
+          requestedSource &&
+          requestedSource !== String(dataset.source_user_id || "")
+        ) {
+          app.log("error", "Bridge", "拒绝写入其他账号的审核标记", {
+            requested_source: requestedSource,
+            active_source: dataset.source_user_id
+          });
+          window.dispatchEvent(
+            new CustomEvent("xfc:reviews-error", {
+              detail: { message: "账号已切换，请重新从油猴同步后再发送队列。" }
+            })
+          );
+          return;
+        }
         const map = new Map(dataset.accounts.map((account) => [String(account.account_id), account]));
         for (const review of reviews) {
           const id = String(review.account_id || "");
@@ -956,8 +1199,10 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
     #xfc-panel button.primary{background:#0f1419;color:#fff;border-color:#0f1419}#xfc-panel button.danger{background:#b42318;color:#fff;border-color:#b42318}
     #xfc-panel button:disabled{cursor:wait;opacity:.55}
     #xfc-panel label{display:flex;flex-direction:column;gap:4px;color:#536471;font-size:11px}#xfc-panel input{width:92px;padding:6px 8px;border:1px solid #cfd9de;border-radius:8px}#xfc-panel input[type=checkbox]{width:auto;padding:0}
+    #xfc-account-summary{margin-bottom:5px;padding:9px;border-radius:9px;background:#fff8dc;color:#655016;font-size:10px}
     .xfc-progress{margin-top:9px}.xfc-progress-track{height:7px;overflow:hidden;border-radius:999px;background:#eff3f4}.xfc-progress-bar{display:block;width:0;height:100%;border-radius:inherit;background:#1d9bf0;transition:width .2s ease}.xfc-progress.active.indeterminate .xfc-progress-bar{width:36%;animation:xfc-slide 1.15s ease-in-out infinite}.xfc-progress.complete .xfc-progress-bar{width:100%;background:#2e7d53}.xfc-progress.error .xfc-progress-bar{width:100%;background:#b42318}.xfc-progress.stopped .xfc-progress-bar{background:#b7791f}.xfc-progress small{display:block;margin-top:5px;color:#536471;font-size:10px}
     @keyframes xfc-slide{from{transform:translateX(-110%)}to{transform:translateX(300%)}}
+    .xfc-queue-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:9px 0 6px}.xfc-queue-head strong{font-size:11px}.xfc-queue-list{height:118px!important;background:#f7f9f9!important;color:#536471!important}.xfc-queue-list[hidden]{display:none}
     #xfc-log{max-height:150px;min-height:50px;overflow:auto;margin-top:10px;padding:9px;border-radius:9px;background:#f7f9f9;color:#536471;font:10px/1.55 ui-monospace,monospace;white-space:pre-wrap}
   `;
 
@@ -978,6 +1223,7 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
         <aside id="xfc-panel" hidden>
           <header><h2>关注清理助手</h2><button id="xfc-close">关闭</button></header>
           <main>
+            <div id="xfc-account-summary">正在读取本地进度…</div>
             <section>
               <h3>1. 导出关注列表（登录态）</h3>
               <textarea id="xfc-following-curl" placeholder="粘贴 Following 的 Copy as cURL (bash)"></textarea>
@@ -989,6 +1235,7 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
               <div class="row">
                 <label>本次最多<input id="xfc-probe-limit" type="number" min="0" value="50"></label>
                 <label>间隔（秒）<input id="xfc-probe-delay" type="number" min="1" value="3"></label>
+                <label>并发数<input id="xfc-probe-concurrency" type="number" min="1" max="8" value="2"></label>
                 <label><span>范围</span><span><input id="xfc-retry-failed" type="checkbox">重试全部异常</span></label>
               </div>
               <div class="row"><button class="primary" id="xfc-probe-start">开始探测</button><button id="xfc-stop">安全停止</button></div>
@@ -1000,6 +1247,8 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
             </section>
             <section>
               <h3>4. 分批取消关注（登录态）</h3>
+              <div class="xfc-queue-head"><strong id="xfc-queue-summary">队列尚未读取</strong><button id="xfc-refresh-queue">刷新队列</button></div>
+              <textarea class="xfc-queue-list" id="xfc-queue-list" readonly hidden placeholder="静态页面发送的待取消账号会显示在这里"></textarea>
               <textarea id="xfc-destroy-curl" placeholder="粘贴 friendships/destroy.json 的 Copy as cURL (bash)"></textarea>
               <div class="row"><button id="xfc-save-destroy">保存请求模板</button></div>
               <div class="row">
@@ -1044,8 +1293,101 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
         button.disabled = busy;
         button.textContent = busy ? busyLabel : normalLabel;
       };
+      const watchedQueueKeys = new Set();
+      const refreshQueue = async (writeLog = true) => {
+        const sourceUserId = await app.getActiveSourceId();
+        const queue = await app.loadUnfollowQueue(sourceUserId);
+        const pending = queue.filter((item) => item.status !== "success");
+        const success = queue.filter((item) => item.status === "success").length;
+        const failed = queue.filter((item) => item.status === "failed").length;
+        el("xfc-queue-summary").textContent =
+          `队列 ${queue.length} 人 · 待处理 ${pending.length} · 已成功 ${success}` +
+          (failed ? ` · 失败待重试 ${failed}` : "");
+        const list = el("xfc-queue-list");
+        list.hidden = pending.length === 0;
+        list.value = pending
+          .map((item, index) =>
+            `${index + 1}. @${item.screen_name || "未知"} · ${item.account_id}` +
+            (item.status === "failed" ? " · 上次失败" : "")
+          )
+          .join("\n");
+        if (writeLog) {
+          log(`取消队列已刷新：总计 ${queue.length}，待处理 ${pending.length}，已成功 ${success}。`, "info", "Unfollow");
+        }
+        if (
+          sourceUserId &&
+          typeof GM_addValueChangeListener === "function" &&
+          !watchedQueueKeys.has(app.queueKey(sourceUserId))
+        ) {
+          const queueKey = app.queueKey(sourceUserId);
+          watchedQueueKeys.add(queueKey);
+          GM_addValueChangeListener(queueKey, () => refreshQueue(false));
+        }
+        if (queue.length) {
+          setProgress("xfc-unfollow-progress", {
+            phase: pending.length ? "stopped" : "complete",
+            message: pending.length
+              ? `取消队列待处理 ${pending.length}/${queue.length}`
+              : `取消队列已完成 ${queue.length}/${queue.length}`,
+            current: success,
+            total: queue.length
+          });
+        } else {
+          el("xfc-unfollow-progress").hidden = true;
+        }
+        return queue;
+      };
+      const restoreState = async () => {
+        const dataset = await app.loadDataset();
+        const total = dataset.accounts.length;
+        const probed = dataset.accounts.filter((account) => account.fetched_at).length;
+        const sourceUserId = String(dataset.source_user_id || "");
+        el("xfc-account-summary").textContent = sourceUserId
+          ? `当前数据账号：${sourceUserId} · 关注 ${total} 人 · 已探测 ${probed}/${total}`
+          : "尚无账号数据，请先导出关注列表。";
+        if (total || dataset.following_page) {
+          setProgress("xfc-following-progress", {
+            phase: dataset.completed_following ? "complete" : "stopped",
+            message: dataset.completed_following
+              ? `关注列表已完成 · 共 ${total} 人`
+              : `关注列表未完成 · 已保存 ${total} 人 · 第 ${dataset.following_page || 0} 页`,
+            current: total,
+            total: dataset.completed_following ? total : undefined
+          });
+        } else {
+          el("xfc-following-progress").hidden = true;
+        }
+        if (total) {
+          const savedStatus = dataset.profile_probe?.status || "paused";
+          setProgress("xfc-probe-progress", {
+            phase:
+              probed >= total
+                ? "complete"
+                : savedStatus === "error"
+                  ? "error"
+                  : "stopped",
+            message:
+              savedStatus === "running"
+                ? `上次任务因页面刷新中断 · 已探测 ${probed}/${total}`
+                : `已探测 ${probed}/${total} · ${savedStatus === "error" ? "上次任务异常停止" : probed >= total ? "全部完成" : "等待继续"}`,
+            current: probed,
+            total
+          });
+          if (savedStatus === "running") {
+            dataset.profile_probe.status = "paused";
+            dataset.profile_probe.updated_at = app.nowIso();
+            await app.saveDataset(dataset);
+          }
+        } else {
+          el("xfc-probe-progress").hidden = true;
+        }
+        await refreshQueue(false);
+      };
       app.on("log", (event) => showLog(event.detail));
-      el("xfc-launch").onclick = () => { el("xfc-panel").hidden = !el("xfc-panel").hidden; };
+      el("xfc-launch").onclick = () => {
+        el("xfc-panel").hidden = !el("xfc-panel").hidden;
+        if (!el("xfc-panel").hidden) restoreState();
+      };
       el("xfc-close").onclick = () => { el("xfc-panel").hidden = true; };
       el("xfc-following-start").onclick = async () => {
         setBusy("xfc-following-start", true, "正在导出…", "开始 / 继续导出");
@@ -1068,28 +1410,30 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
           log(message, "error", "Following");
         } finally {
           setBusy("xfc-following-start", false, "", "开始 / 继续导出");
+          await restoreState();
         }
       };
       el("xfc-probe-start").onclick = async () => {
         setBusy("xfc-probe-start", true, "正在探测…", "开始探测");
         try {
-          await app.profileProbe.start({
+          const dataset = await app.profileProbe.start({
             limit: Number(el("xfc-probe-limit").value),
             intervalMs: Number(el("xfc-probe-delay").value) * 1000,
+            concurrency: Number(el("xfc-probe-concurrency").value),
             retryFailed: el("xfc-retry-failed").checked
           }, (update) => setProgress("xfc-probe-progress", update));
-          if (!app.profileProbe.stopRequested) {
-            const progress = el("xfc-probe-progress");
-            const message = progress.querySelector("small").textContent || "本轮匿名探测结束";
-            setProgress("xfc-probe-progress", { phase: "complete", message });
-            log("本轮匿名探测结束。", "info", "ProfileProbe");
-          }
+          log(
+            `本轮匿名探测结束，整体 ${dataset.profile_probe?.completed || 0}/${dataset.accounts.length}。`,
+            "info",
+            "ProfileProbe"
+          );
         } catch (error) {
           const message = error.message || String(error);
           setProgress("xfc-probe-progress", { phase: "error", message });
           log(message, "error", "ProfileProbe");
         } finally {
           setBusy("xfc-probe-start", false, "", "开始探测");
+          await restoreState();
         }
       };
       el("xfc-stop").onclick = () => {
@@ -1105,10 +1449,11 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
       };
       el("xfc-clear-data").onclick = async () => {
         if (!confirm("确认清空关注列表、探测结果和取消队列？请先导出 CSV 备份。")) return;
-        await app.gmDelete(app.constants.DATASET_KEY);
-        await app.gmDelete(app.constants.UNFOLLOW_QUEUE_KEY);
+        await app.clearActiveData();
+        await restoreState();
         log("本地关注数据和取消队列已清空。", "warn");
       };
+      el("xfc-refresh-queue").onclick = () => refreshQueue(true);
       el("xfc-save-destroy").onclick = async () => {
         try {
           await app.unfollow.saveTemplate(el("xfc-destroy-curl").value);
@@ -1130,14 +1475,17 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
             setProgress("xfc-unfollow-progress", { phase: "complete", message });
             log("本批取消关注执行结束。", "info", "Unfollow");
           }
+          await refreshQueue(false);
         } catch (error) {
           const message = error.message || String(error);
           setProgress("xfc-unfollow-progress", { phase: "error", message });
           log(message, "error", "Unfollow");
         } finally {
           setBusy("xfc-unfollow-start", false, "", "确认并执行一批");
+          await restoreState();
         }
       };
+      restoreState();
     }
   };
 })(window.XFollowCleaner);

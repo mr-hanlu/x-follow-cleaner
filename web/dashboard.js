@@ -1,6 +1,7 @@
 "use strict";
 
-const DECISION_KEY = "xfc-dashboard-reviews-v1";
+const LEGACY_DECISION_KEY = "xfc-dashboard-reviews-v1";
+const DECISION_KEY_PREFIX = "xfc-dashboard-reviews-v2:";
 const dashboardLog = (level, message, details) => {
   const method = ["info", "warn", "error"].includes(level) ? level : "log";
   if (details === undefined) console[method](`[XFC Dashboard] ${message}`);
@@ -10,7 +11,8 @@ let syncTimer = null;
 let queueTimer = null;
 const state = {
   accounts: [],
-  reviews: loadReviews(),
+  reviews: loadReviews(""),
+  sourceUserId: "",
   page: 1,
   pageSize: 50,
   undo: null,
@@ -33,12 +35,25 @@ const elements = {
   previous: $("#previous-page"), next: $("#next-page"), pageSize: $("#page-size")
 };
 
-function loadReviews() {
-  try { return JSON.parse(localStorage.getItem(DECISION_KEY) || "{}"); }
+function decisionKey(sourceUserId = "") {
+  return `${DECISION_KEY_PREFIX}${sourceUserId || "unscoped"}`;
+}
+function loadReviews(sourceUserId = "") {
+  try {
+    const isolated = localStorage.getItem(decisionKey(sourceUserId));
+    if (isolated) return JSON.parse(isolated);
+    if (!sourceUserId) {
+      return JSON.parse(localStorage.getItem(LEGACY_DECISION_KEY) || "{}");
+    }
+    return {};
+  }
   catch { return {}; }
 }
 function saveReviews() {
-  localStorage.setItem(DECISION_KEY, JSON.stringify(state.reviews));
+  localStorage.setItem(
+    decisionKey(state.sourceUserId),
+    JSON.stringify(state.reviews)
+  );
 }
 function number(value) {
   if (value === "" || value == null) return null;
@@ -87,15 +102,19 @@ function parseCSV(text) {
 const csvCell = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
 function downloadCSV(filename, accounts) {
   const columns = [
-    "account_id","screen_name","name","profile_url","is_blue_verified","verified_type",
+    "source_user_id","account_id","screen_name","name","profile_url","is_blue_verified","verified_type",
     "followers_count","following_count","protected","last_post_at","inactive_days",
     "last_post_id","last_post_url","data_status","fetched_at","review_status",
     "unfollow_status","unfollowed_at","unfollow_http_status"
   ];
   const rows = accounts.map((account) =>
-    columns.map((column) => csvCell(column === "review_status"
-      ? (state.reviews[account.account_id] || account.review_status || "")
-      : account[column])).join(",")
+    columns.map((column) => csvCell(
+      column === "source_user_id"
+        ? state.sourceUserId
+        : column === "review_status"
+          ? (state.reviews[account.account_id] || account.review_status || "")
+          : account[column]
+    )).join(",")
   );
   const url = URL.createObjectURL(new Blob([`\uFEFF${columns.join(",")}\n${rows.join("\n")}`], { type: "text/csv;charset=utf-8" }));
   const link = document.createElement("a"); link.href = url; link.download = filename; link.click();
@@ -216,7 +235,12 @@ function render() {
     elements.empty.lastElementChild.textContent = state.accounts.length ? "请放宽或重置筛选条件。" : "从油猴同步或导入 CSV 后即可开始。";
   }
 }
-function loadAccounts(accounts, source) {
+function loadAccounts(accounts, source, sourceUserId = "") {
+  const normalizedSource = String(sourceUserId || accounts[0]?.source_user_id || "");
+  if (normalizedSource !== state.sourceUserId) {
+    state.sourceUserId = normalizedSource;
+    state.reviews = loadReviews(normalizedSource);
+  }
   state.accounts = normalize(accounts);
   for (const account of state.accounts) {
     if (["keep","remove","done"].includes(account.review_status) && !state.reviews[account.account_id]) {
@@ -224,7 +248,10 @@ function loadAccounts(accounts, source) {
     }
   }
   saveReviews(); state.source = source; state.page = 1;
-  elements.notice.textContent = `已载入 ${state.accounts.length.toLocaleString("zh-CN")} 个账号，来源：${source}。`;
+  elements.notice.textContent =
+    `已载入 ${state.accounts.length.toLocaleString("zh-CN")} 个账号，来源：${source}` +
+    (state.sourceUserId ? `，所属账号：${state.sourceUserId}` : "") +
+    "。";
   render();
 }
 function bulk(value) {
@@ -248,7 +275,11 @@ window.addEventListener("xfc:dataset", (event) => {
     accounts: event.detail?.accounts?.length || 0,
     updated_at: event.detail?.updated_at || ""
   });
-  loadAccounts(event.detail?.accounts || [], "油猴本地数据");
+  loadAccounts(
+    event.detail?.accounts || [],
+    "油猴本地数据",
+    event.detail?.source_user_id || ""
+  );
 });
 window.addEventListener("xfc:reviews-saved", (event) => {
   clearTimeout(queueTimer);
@@ -256,6 +287,13 @@ window.addEventListener("xfc:reviews-saved", (event) => {
   elements.send.textContent = "发送待取消队列";
   elements.notice.textContent = `已写回 ${event.detail?.saved || 0} 个标记，待取消队列 ${event.detail?.queued || 0} 人。请回到 X 页面执行。`;
   dashboardLog("info", "审核标记已写回油猴。", event.detail);
+});
+window.addEventListener("xfc:reviews-error", (event) => {
+  clearTimeout(queueTimer);
+  elements.send.disabled = false;
+  elements.send.textContent = "发送待取消队列";
+  elements.notice.textContent = event.detail?.message || "写回失败，请重新同步后重试。";
+  dashboardLog("error", "审核标记写回失败。", event.detail);
 });
 elements.sync.onclick = () => {
   clearTimeout(syncTimer);
@@ -273,7 +311,9 @@ elements.sync.onclick = () => {
 };
 elements.file.onchange = async (event) => {
   const file = event.target.files?.[0]; if (!file) return;
-  loadAccounts(parseCSV(await file.text()), file.name); elements.file.value = "";
+  const rows = parseCSV(await file.text());
+  loadAccounts(rows, file.name, rows[0]?.source_user_id || "");
+  elements.file.value = "";
 };
 elements.save.onclick = () => downloadCSV(`x_following_reviewed_${new Date().toISOString().slice(0,10).replaceAll("-","")}.csv`, state.accounts);
 elements.send.onclick = () => {
@@ -284,7 +324,9 @@ elements.send.onclick = () => {
   elements.send.textContent = "发送中…";
   elements.notice.textContent = "正在把审核标记写回油猴本地队列…";
   dashboardLog("info", "发送审核标记。", { reviews: reviews.length });
-  window.dispatchEvent(new CustomEvent("xfc:save-reviews", { detail: { reviews } }));
+  window.dispatchEvent(new CustomEvent("xfc:save-reviews", {
+    detail: { reviews, source_user_id: state.sourceUserId }
+  }));
   queueTimer = setTimeout(() => {
     elements.send.disabled = false;
     elements.send.textContent = "发送待取消队列";

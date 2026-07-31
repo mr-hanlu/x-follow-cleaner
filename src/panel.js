@@ -9,8 +9,10 @@
     #xfc-panel button.primary{background:#0f1419;color:#fff;border-color:#0f1419}#xfc-panel button.danger{background:#b42318;color:#fff;border-color:#b42318}
     #xfc-panel button:disabled{cursor:wait;opacity:.55}
     #xfc-panel label{display:flex;flex-direction:column;gap:4px;color:#536471;font-size:11px}#xfc-panel input{width:92px;padding:6px 8px;border:1px solid #cfd9de;border-radius:8px}#xfc-panel input[type=checkbox]{width:auto;padding:0}
+    #xfc-account-summary{margin-bottom:5px;padding:9px;border-radius:9px;background:#fff8dc;color:#655016;font-size:10px}
     .xfc-progress{margin-top:9px}.xfc-progress-track{height:7px;overflow:hidden;border-radius:999px;background:#eff3f4}.xfc-progress-bar{display:block;width:0;height:100%;border-radius:inherit;background:#1d9bf0;transition:width .2s ease}.xfc-progress.active.indeterminate .xfc-progress-bar{width:36%;animation:xfc-slide 1.15s ease-in-out infinite}.xfc-progress.complete .xfc-progress-bar{width:100%;background:#2e7d53}.xfc-progress.error .xfc-progress-bar{width:100%;background:#b42318}.xfc-progress.stopped .xfc-progress-bar{background:#b7791f}.xfc-progress small{display:block;margin-top:5px;color:#536471;font-size:10px}
     @keyframes xfc-slide{from{transform:translateX(-110%)}to{transform:translateX(300%)}}
+    .xfc-queue-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:9px 0 6px}.xfc-queue-head strong{font-size:11px}.xfc-queue-list{height:118px!important;background:#f7f9f9!important;color:#536471!important}.xfc-queue-list[hidden]{display:none}
     #xfc-log{max-height:150px;min-height:50px;overflow:auto;margin-top:10px;padding:9px;border-radius:9px;background:#f7f9f9;color:#536471;font:10px/1.55 ui-monospace,monospace;white-space:pre-wrap}
   `;
 
@@ -31,6 +33,7 @@
         <aside id="xfc-panel" hidden>
           <header><h2>关注清理助手</h2><button id="xfc-close">关闭</button></header>
           <main>
+            <div id="xfc-account-summary">正在读取本地进度…</div>
             <section>
               <h3>1. 导出关注列表（登录态）</h3>
               <textarea id="xfc-following-curl" placeholder="粘贴 Following 的 Copy as cURL (bash)"></textarea>
@@ -42,6 +45,7 @@
               <div class="row">
                 <label>本次最多<input id="xfc-probe-limit" type="number" min="0" value="50"></label>
                 <label>间隔（秒）<input id="xfc-probe-delay" type="number" min="1" value="3"></label>
+                <label>并发数<input id="xfc-probe-concurrency" type="number" min="1" max="8" value="2"></label>
                 <label><span>范围</span><span><input id="xfc-retry-failed" type="checkbox">重试全部异常</span></label>
               </div>
               <div class="row"><button class="primary" id="xfc-probe-start">开始探测</button><button id="xfc-stop">安全停止</button></div>
@@ -53,6 +57,8 @@
             </section>
             <section>
               <h3>4. 分批取消关注（登录态）</h3>
+              <div class="xfc-queue-head"><strong id="xfc-queue-summary">队列尚未读取</strong><button id="xfc-refresh-queue">刷新队列</button></div>
+              <textarea class="xfc-queue-list" id="xfc-queue-list" readonly hidden placeholder="静态页面发送的待取消账号会显示在这里"></textarea>
               <textarea id="xfc-destroy-curl" placeholder="粘贴 friendships/destroy.json 的 Copy as cURL (bash)"></textarea>
               <div class="row"><button id="xfc-save-destroy">保存请求模板</button></div>
               <div class="row">
@@ -97,8 +103,101 @@
         button.disabled = busy;
         button.textContent = busy ? busyLabel : normalLabel;
       };
+      const watchedQueueKeys = new Set();
+      const refreshQueue = async (writeLog = true) => {
+        const sourceUserId = await app.getActiveSourceId();
+        const queue = await app.loadUnfollowQueue(sourceUserId);
+        const pending = queue.filter((item) => item.status !== "success");
+        const success = queue.filter((item) => item.status === "success").length;
+        const failed = queue.filter((item) => item.status === "failed").length;
+        el("xfc-queue-summary").textContent =
+          `队列 ${queue.length} 人 · 待处理 ${pending.length} · 已成功 ${success}` +
+          (failed ? ` · 失败待重试 ${failed}` : "");
+        const list = el("xfc-queue-list");
+        list.hidden = pending.length === 0;
+        list.value = pending
+          .map((item, index) =>
+            `${index + 1}. @${item.screen_name || "未知"} · ${item.account_id}` +
+            (item.status === "failed" ? " · 上次失败" : "")
+          )
+          .join("\n");
+        if (writeLog) {
+          log(`取消队列已刷新：总计 ${queue.length}，待处理 ${pending.length}，已成功 ${success}。`, "info", "Unfollow");
+        }
+        if (
+          sourceUserId &&
+          typeof GM_addValueChangeListener === "function" &&
+          !watchedQueueKeys.has(app.queueKey(sourceUserId))
+        ) {
+          const queueKey = app.queueKey(sourceUserId);
+          watchedQueueKeys.add(queueKey);
+          GM_addValueChangeListener(queueKey, () => refreshQueue(false));
+        }
+        if (queue.length) {
+          setProgress("xfc-unfollow-progress", {
+            phase: pending.length ? "stopped" : "complete",
+            message: pending.length
+              ? `取消队列待处理 ${pending.length}/${queue.length}`
+              : `取消队列已完成 ${queue.length}/${queue.length}`,
+            current: success,
+            total: queue.length
+          });
+        } else {
+          el("xfc-unfollow-progress").hidden = true;
+        }
+        return queue;
+      };
+      const restoreState = async () => {
+        const dataset = await app.loadDataset();
+        const total = dataset.accounts.length;
+        const probed = dataset.accounts.filter((account) => account.fetched_at).length;
+        const sourceUserId = String(dataset.source_user_id || "");
+        el("xfc-account-summary").textContent = sourceUserId
+          ? `当前数据账号：${sourceUserId} · 关注 ${total} 人 · 已探测 ${probed}/${total}`
+          : "尚无账号数据，请先导出关注列表。";
+        if (total || dataset.following_page) {
+          setProgress("xfc-following-progress", {
+            phase: dataset.completed_following ? "complete" : "stopped",
+            message: dataset.completed_following
+              ? `关注列表已完成 · 共 ${total} 人`
+              : `关注列表未完成 · 已保存 ${total} 人 · 第 ${dataset.following_page || 0} 页`,
+            current: total,
+            total: dataset.completed_following ? total : undefined
+          });
+        } else {
+          el("xfc-following-progress").hidden = true;
+        }
+        if (total) {
+          const savedStatus = dataset.profile_probe?.status || "paused";
+          setProgress("xfc-probe-progress", {
+            phase:
+              probed >= total
+                ? "complete"
+                : savedStatus === "error"
+                  ? "error"
+                  : "stopped",
+            message:
+              savedStatus === "running"
+                ? `上次任务因页面刷新中断 · 已探测 ${probed}/${total}`
+                : `已探测 ${probed}/${total} · ${savedStatus === "error" ? "上次任务异常停止" : probed >= total ? "全部完成" : "等待继续"}`,
+            current: probed,
+            total
+          });
+          if (savedStatus === "running") {
+            dataset.profile_probe.status = "paused";
+            dataset.profile_probe.updated_at = app.nowIso();
+            await app.saveDataset(dataset);
+          }
+        } else {
+          el("xfc-probe-progress").hidden = true;
+        }
+        await refreshQueue(false);
+      };
       app.on("log", (event) => showLog(event.detail));
-      el("xfc-launch").onclick = () => { el("xfc-panel").hidden = !el("xfc-panel").hidden; };
+      el("xfc-launch").onclick = () => {
+        el("xfc-panel").hidden = !el("xfc-panel").hidden;
+        if (!el("xfc-panel").hidden) restoreState();
+      };
       el("xfc-close").onclick = () => { el("xfc-panel").hidden = true; };
       el("xfc-following-start").onclick = async () => {
         setBusy("xfc-following-start", true, "正在导出…", "开始 / 继续导出");
@@ -121,28 +220,30 @@
           log(message, "error", "Following");
         } finally {
           setBusy("xfc-following-start", false, "", "开始 / 继续导出");
+          await restoreState();
         }
       };
       el("xfc-probe-start").onclick = async () => {
         setBusy("xfc-probe-start", true, "正在探测…", "开始探测");
         try {
-          await app.profileProbe.start({
+          const dataset = await app.profileProbe.start({
             limit: Number(el("xfc-probe-limit").value),
             intervalMs: Number(el("xfc-probe-delay").value) * 1000,
+            concurrency: Number(el("xfc-probe-concurrency").value),
             retryFailed: el("xfc-retry-failed").checked
           }, (update) => setProgress("xfc-probe-progress", update));
-          if (!app.profileProbe.stopRequested) {
-            const progress = el("xfc-probe-progress");
-            const message = progress.querySelector("small").textContent || "本轮匿名探测结束";
-            setProgress("xfc-probe-progress", { phase: "complete", message });
-            log("本轮匿名探测结束。", "info", "ProfileProbe");
-          }
+          log(
+            `本轮匿名探测结束，整体 ${dataset.profile_probe?.completed || 0}/${dataset.accounts.length}。`,
+            "info",
+            "ProfileProbe"
+          );
         } catch (error) {
           const message = error.message || String(error);
           setProgress("xfc-probe-progress", { phase: "error", message });
           log(message, "error", "ProfileProbe");
         } finally {
           setBusy("xfc-probe-start", false, "", "开始探测");
+          await restoreState();
         }
       };
       el("xfc-stop").onclick = () => {
@@ -158,10 +259,11 @@
       };
       el("xfc-clear-data").onclick = async () => {
         if (!confirm("确认清空关注列表、探测结果和取消队列？请先导出 CSV 备份。")) return;
-        await app.gmDelete(app.constants.DATASET_KEY);
-        await app.gmDelete(app.constants.UNFOLLOW_QUEUE_KEY);
+        await app.clearActiveData();
+        await restoreState();
         log("本地关注数据和取消队列已清空。", "warn");
       };
+      el("xfc-refresh-queue").onclick = () => refreshQueue(true);
       el("xfc-save-destroy").onclick = async () => {
         try {
           await app.unfollow.saveTemplate(el("xfc-destroy-curl").value);
@@ -183,14 +285,17 @@
             setProgress("xfc-unfollow-progress", { phase: "complete", message });
             log("本批取消关注执行结束。", "info", "Unfollow");
           }
+          await refreshQueue(false);
         } catch (error) {
           const message = error.message || String(error);
           setProgress("xfc-unfollow-progress", { phase: "error", message });
           log(message, "error", "Unfollow");
         } finally {
           setBusy("xfc-unfollow-start", false, "", "确认并执行一批");
+          await restoreState();
         }
       };
+      restoreState();
     }
   };
 })(window.XFollowCleaner);

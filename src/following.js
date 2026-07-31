@@ -83,10 +83,8 @@
       const csrf = app.getCookie("ct0");
       if (!csrf) throw new Error("没有读取到 ct0，请确认当前已登录 X。");
 
-      let dataset = await app.loadDataset();
-      if (dataset.source_user_id && dataset.source_user_id !== sourceUserId) {
-        throw new Error("现有数据属于另一个 X 账号，请先在面板中清空数据。");
-      }
+      await app.setActiveSourceId(sourceUserId);
+      let dataset = await app.loadDataset(sourceUserId);
       dataset.source_user_id = sourceUserId;
       let cursor = dataset.following_cursor || "";
       let page = Number(dataset.following_page || 0);

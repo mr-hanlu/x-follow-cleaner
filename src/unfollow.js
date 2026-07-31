@@ -32,12 +32,14 @@
 
     async saveTemplate(curlText) {
       const template = sanitizedTemplate(curlText);
-      await app.gmSet(app.constants.UNFOLLOW_TEMPLATE_KEY, template);
+      await app.saveUnfollowTemplate(template);
       return template;
     },
 
     async queueAccounts(accounts) {
       const dataset = await app.loadDataset();
+      const sourceUserId = String(dataset.source_user_id || "");
+      if (!sourceUserId) throw new Error("没有活动账号，无法建立取消队列。");
       const known = new Map(dataset.accounts.map((account) => [String(account.account_id), account]));
       const queue = [];
       for (const value of accounts) {
@@ -52,23 +54,36 @@
         });
       }
       await app.saveDataset(dataset);
-      await app.gmSet(app.constants.UNFOLLOW_QUEUE_KEY, queue);
+      await app.saveUnfollowQueue(queue, sourceUserId);
       return queue;
     },
 
     async start(options = {}, onProgress = () => {}) {
       if (this.running) throw new Error("取消关注任务已经在运行。");
       if (location.hostname !== "x.com") throw new Error("请在 x.com 页面执行取消关注。");
-      const template = await app.gmGet(app.constants.UNFOLLOW_TEMPLATE_KEY, null);
-      if (!template) throw new Error("请先粘贴并保存 destroy.json cURL。");
       const csrf = app.getCookie("ct0");
       if (!csrf) throw new Error("没有读取到 ct0，请确认已登录 X。");
-      let queue = await app.gmGet(app.constants.UNFOLLOW_QUEUE_KEY, []);
+      const dataset = await app.loadDataset();
+      const sourceUserId = String(dataset.source_user_id || "");
+      if (!sourceUserId) throw new Error("没有活动账号，请先导出当前账号的关注列表。");
+      const template = await app.loadUnfollowTemplate(sourceUserId);
+      if (!template) throw new Error("请先为当前账号粘贴并保存 destroy.json cURL。");
+      const loggedAccountId = app.getLoggedAccountId();
+      if (loggedAccountId && loggedAccountId !== sourceUserId) {
+        throw new Error(
+          `账号不匹配：当前登录账号是 ${loggedAccountId}，取消队列属于 ${sourceUserId}。`
+        );
+      }
+      if (!loggedAccountId) {
+        app.log("warn", "Unfollow", "无法从 twid 读取当前登录账号 ID，请确认队列属于当前账号。", {
+          source_user_id: sourceUserId
+        });
+      }
+      let queue = await app.loadUnfollowQueue(sourceUserId);
       const batchSize = Math.min(50, Math.max(1, Number(options.batchSize || 10)));
       const intervalMs = Math.max(1000, Number(options.intervalMs || 5000));
       const targets = queue.filter((item) => item.status !== "success").slice(0, batchSize);
       if (!targets.length) throw new Error("没有待取消账号。");
-      let dataset = await app.loadDataset();
       const map = new Map(dataset.accounts.map((account) => [String(account.account_id), account]));
       this.running = true;
       this.stopRequested = false;
@@ -131,7 +146,7 @@
               account.review_status = "done";
             }
           }
-          await app.gmSet(app.constants.UNFOLLOW_QUEUE_KEY, queue);
+          await app.saveUnfollowQueue(queue, sourceUserId);
           await app.saveDataset(dataset);
           onProgress({
             phase: index + 1 === targets.length ? "complete" : "progress",

@@ -82,6 +82,7 @@
       if (!dataset.accounts.length) throw new Error("请先导出关注列表。");
       const intervalMs = Math.max(500, Number(options.intervalMs || 3000));
       const limit = Math.max(0, Number(options.limit || 0));
+      const concurrency = Math.min(8, Math.max(1, Number(options.concurrency || 1)));
       const retryFailed = Boolean(options.retryFailed);
       const transient = new Set(["rate_limited", "request_error", "parse_error"]);
       let targets = dataset.accounts.filter((account) =>
@@ -92,36 +93,103 @@
             String(account.data_status || "").startsWith("http_")
       );
       if (limit) targets = targets.slice(0, limit);
+      const overallTotal = dataset.accounts.length;
+      const overallCompleted = () =>
+        dataset.accounts.filter((account) => Boolean(account.fetched_at)).length;
       this.running = true;
       this.stopRequested = false;
       let completed = 0;
+      let nextTargetIndex = 0;
+      let fatalError = null;
+      let saveChain = Promise.resolve();
+      dataset.profile_probe = {
+        status: targets.length ? "running" : "complete",
+        completed: overallCompleted(),
+        total: overallTotal,
+        batch_completed: 0,
+        batch_total: targets.length,
+        concurrency,
+        interval_ms: intervalMs,
+        started_at: app.nowIso(),
+        updated_at: app.nowIso()
+      };
+      await app.saveDataset(dataset);
       onProgress({
         phase: targets.length ? "start" : "complete",
         message: targets.length
-          ? `匿名探测准备完成，共 ${targets.length} 个账号`
-          : "没有需要探测的账号",
-        current: 0,
-        total: targets.length
+          ? `整体已探测 ${overallCompleted()}/${overallTotal} · 本轮 ${targets.length} · 并发 ${concurrency}`
+          : `已探测 ${overallCompleted()}/${overallTotal}，没有待处理账号`,
+        current: overallCompleted(),
+        total: overallTotal,
+        batch_current: 0,
+        batch_total: targets.length
       });
       app.log("info", "ProfileProbe", "任务开始", {
         targets: targets.length,
         interval_ms: intervalMs,
+        concurrency,
         retry_failed: retryFailed
       });
 
-      try {
-        for (const target of targets) {
-          if (this.stopRequested) break;
+      const commitResult = (target, result) => {
+        saveChain = saveChain.then(async () => {
+          app.upsertAccounts(dataset, [result]);
+          const currentOverall = overallCompleted();
+          dataset.profile_probe = {
+            ...dataset.profile_probe,
+            status: "running",
+            completed: currentOverall,
+            total: overallTotal,
+            batch_completed: completed + 1,
+            current_screen_name: target.screen_name,
+            updated_at: app.nowIso()
+          };
+          await app.saveDataset(dataset);
+          completed += 1;
+          onProgress({
+            phase: "progress",
+            message: `已探测 ${currentOverall}/${overallTotal} · 本轮 ${completed}/${targets.length}：@${target.screen_name} ${result.data_status}`,
+            current: currentOverall,
+            total: overallTotal,
+            batch_current: completed,
+            batch_total: targets.length
+          });
+          app.log(
+            result.data_status === "ok" ? "info" : "warn",
+            "ProfileProbe",
+            `@${target.screen_name} ${result.data_status}`,
+            { current: completed, total: targets.length, concurrency }
+          );
+        });
+        return saveChain;
+      };
+
+      const worker = async (workerIndex) => {
+        if (workerIndex > 0) {
+          await app.sleep(
+            workerIndex * Math.min(250, Math.max(60, intervalMs / concurrency))
+          );
+        }
+        while (!this.stopRequested && !fatalError) {
+          const targetIndex = nextTargetIndex;
+          nextTargetIndex += 1;
+          if (targetIndex >= targets.length) return;
+          const target = targets[targetIndex];
           let result;
           onProgress({
             phase: "request",
-            message: `正在请求 ${completed + 1}/${targets.length}：@${target.screen_name}`,
-            current: completed,
-            total: targets.length
+            message: `已探测 ${overallCompleted()}/${overallTotal} · 正在请求本轮 ${targetIndex + 1}/${targets.length}：@${target.screen_name}`,
+            current: overallCompleted(),
+            total: overallTotal,
+            batch_current: completed,
+            batch_total: targets.length,
+            active: Math.min(concurrency, targets.length - completed)
           });
-          app.log("info", "ProfileProbe", `请求 @${target.screen_name}`, {
-            current: completed + 1,
+          app.log("info", "ProfileProbe", `工作槽 ${workerIndex + 1} 请求 @${target.screen_name}`, {
+            scheduled: targetIndex + 1,
+            completed,
             total: targets.length,
+            concurrency,
             anonymous: true
           });
           try {
@@ -135,9 +203,9 @@
                 data_status: "rate_limited",
                 fetched_at: app.nowIso()
               };
-              app.upsertAccounts(dataset, [result]);
-              await app.saveDataset(dataset);
-              throw new Error("匿名主页请求遇到 429，已保存进度并停止。");
+              await commitResult(target, result);
+              fatalError = new Error("匿名主页请求遇到 429，已保存进度并停止。");
+              return;
             }
             if (response.status !== 200) {
               result = {
@@ -156,39 +224,78 @@
               fetched_at: app.nowIso()
             };
           }
-          app.upsertAccounts(dataset, [result]);
-          await app.saveDataset(dataset);
-          completed += 1;
-          onProgress({
-            phase: completed === targets.length ? "complete" : "progress",
-            message: `匿名探测 ${completed}/${targets.length}：@${target.screen_name} ${result.data_status}`,
-            current: completed,
-            total: targets.length
-          });
-          app.log(
-            result.data_status === "ok" ? "info" : "warn",
-            "ProfileProbe",
-            `@${target.screen_name} ${result.data_status}`,
-            { current: completed, total: targets.length }
-          );
-          if (completed < targets.length) {
+          await commitResult(target, result);
+          if (
+            !this.stopRequested &&
+            !fatalError &&
+            nextTargetIndex < targets.length
+          ) {
             await app.sleep(intervalMs + Math.random() * Math.min(intervalMs * 0.35, 1500));
           }
         }
+      };
+
+      try {
+        const workerCount = Math.min(concurrency, Math.max(1, targets.length));
+        await Promise.all(
+          Array.from({ length: workerCount }, (_, index) => worker(index))
+        );
+        await saveChain;
+        if (fatalError) throw fatalError;
         if (this.stopRequested) {
+          dataset.profile_probe = {
+            ...dataset.profile_probe,
+            status: "paused",
+            completed: overallCompleted(),
+            batch_completed: completed,
+            updated_at: app.nowIso()
+          };
+          await app.saveDataset(dataset);
           onProgress({
             phase: "stopped",
-            message: `已安全停止；本轮完成 ${completed}/${targets.length}`,
-            current: completed,
-            total: targets.length
+            message: `已暂停 · 整体已探测 ${overallCompleted()}/${overallTotal} · 本轮完成 ${completed}/${targets.length}`,
+            current: overallCompleted(),
+            total: overallTotal,
+            batch_current: completed,
+            batch_total: targets.length
           });
           app.log("warn", "ProfileProbe", "用户请求停止", {
             completed,
             total: targets.length
           });
+        } else {
+          const currentOverall = overallCompleted();
+          const allAttempted = currentOverall >= overallTotal;
+          dataset.profile_probe = {
+            ...dataset.profile_probe,
+            status: allAttempted ? "complete" : "paused",
+            completed: currentOverall,
+            batch_completed: completed,
+            updated_at: app.nowIso()
+          };
+          await app.saveDataset(dataset);
+          onProgress({
+            phase: allAttempted ? "complete" : "stopped",
+            message: allAttempted
+              ? `探测完成 · 已探测 ${currentOverall}/${overallTotal}`
+              : `本轮结束 · 整体已探测 ${currentOverall}/${overallTotal} · 本轮 ${completed}/${targets.length}`,
+            current: currentOverall,
+            total: overallTotal,
+            batch_current: completed,
+            batch_total: targets.length
+          });
         }
         return dataset;
       } catch (error) {
+        dataset.profile_probe = {
+          ...dataset.profile_probe,
+          status: "error",
+          completed: overallCompleted(),
+          batch_completed: completed,
+          error: error.message || String(error),
+          updated_at: app.nowIso()
+        };
+        await app.saveDataset(dataset);
         app.log("error", "ProfileProbe", error.message || String(error), {
           completed,
           total: targets.length
