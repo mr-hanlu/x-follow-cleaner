@@ -23,6 +23,7 @@ const state = {
   pageSize: 50,
   undo: null,
   pendingReviews: new Map(),
+  probeTask: null,
   source: "未载入",
   bridge: false
 };
@@ -32,6 +33,7 @@ const elements = {
   bridge: $("#bridge-state"), notice: $("#notice"), file: $("#csv-file"),
   sync: $("#sync-userscript"), save: $("#save-csv"), send: $("#send-queue"),
   total: $("#total-count"), filtered: $("#filtered-count"), remove: $("#remove-count"),
+  probeCount: $("#probe-count"), probeStatus: $("#probe-status"), probeBar: $("#probe-progress-bar"),
   errors: $("#error-count"), result: $("#result-count"), list: $("#account-list"),
   empty: $("#empty"), batch: $("#batch"), batchCount: $("#batch-count"),
   query: $("#query"), minInactive: $("#min-inactive"), maxInactive: $("#max-inactive"),
@@ -266,7 +268,23 @@ function render() {
   const rows = filtered.slice((state.page - 1) * state.pageSize, state.page * state.pageSize);
   const removes = state.accounts.filter((account) => reviewOf(account) === "remove").length;
   const errors = state.accounts.filter((account) => statusKind(account) === "error").length;
+  const probed = state.accounts.filter((account) => Boolean(account.fetched_at)).length;
+  const probePercent = state.accounts.length ? Math.round((probed / state.accounts.length) * 100) : 0;
+  const probeStatus = !state.accounts.length
+    ? "尚未开始"
+    : probed >= state.accounts.length
+      ? "已完成"
+      : state.probeTask?.status === "running"
+        ? "探测中"
+        : state.probeTask?.status === "error"
+          ? "异常停止"
+          : state.probeTask?.status === "paused"
+            ? "已暂停，可继续"
+            : "未完成";
   elements.total.textContent = state.accounts.length.toLocaleString("zh-CN");
+  elements.probeCount.textContent = `${probed.toLocaleString("zh-CN")} / ${state.accounts.length.toLocaleString("zh-CN")}`;
+  elements.probeStatus.textContent = probeStatus;
+  elements.probeBar.style.width = `${probePercent}%`;
   elements.filtered.textContent = filtered.length.toLocaleString("zh-CN");
   elements.remove.textContent = removes.toLocaleString("zh-CN");
   elements.errors.textContent = errors.toLocaleString("zh-CN");
@@ -292,7 +310,7 @@ function render() {
     elements.empty.lastElementChild.textContent = state.accounts.length ? "请放宽或重置筛选条件。" : "从油猴同步或导入 CSV 后即可开始。";
   }
 }
-function loadAccounts(accounts, source, sourceUserId = "", { preservePage = false } = {}) {
+function loadAccounts(accounts, source, sourceUserId = "", { preservePage = false, probeTask = null } = {}) {
   const normalizedSource = String(sourceUserId || accounts[0]?.source_user_id || "");
   if (normalizedSource !== state.sourceUserId) {
     state.sourceUserId = normalizedSource;
@@ -302,12 +320,15 @@ function loadAccounts(accounts, source, sourceUserId = "", { preservePage = fals
     state.dirty = reviewState.dirty;
   }
   state.accounts = normalize(accounts);
+  state.probeTask = probeTask;
   saveReviews(); state.source = source;
   if (!preservePage) state.page = 1;
+  const probed = state.accounts.filter((account) => Boolean(account.fetched_at)).length;
+  const probeState = probed >= state.accounts.length && state.accounts.length ? "已完成" : probeTask?.status === "running" ? "探测中" : "未完成";
   elements.notice.textContent =
     `已载入 ${state.accounts.length.toLocaleString("zh-CN")} 个账号，来源：${source}` +
     (state.sourceUserId ? `，所属账号：${state.sourceUserId}` : "") +
-    "。";
+    `；探测进度 ${probed.toLocaleString("zh-CN")}/${state.accounts.length.toLocaleString("zh-CN")}（${probeState}），未探测账号仍会显示在列表中。`;
   render();
 }
 function bulk(value) {
@@ -371,7 +392,7 @@ window.addEventListener("xfc:dataset", (event) => {
     event.detail?.accounts || [],
     "油猴本地数据",
     event.detail?.source_user_id || "",
-    { preservePage }
+    { preservePage, probeTask: event.detail?.profile_probe || null }
   );
 });
 window.addEventListener("xfc:reviews-saved", (event) => {

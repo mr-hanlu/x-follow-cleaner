@@ -56,6 +56,9 @@ assert.match(dashboardSource, /filter\(\(account\) => state\.dirty\.has\(account
 assert.match(dashboardSource, /state\.dirty\.add\(account\.account_id\)/);
 assert.match(dashboardSource, /button\.classList\.toggle\("active", active\)/);
 assert.match(dashboardHtml, /id="page-jump"/);
+assert.match(dashboardHtml, /id="probe-count"/);
+assert.match(dashboardSource, /探测进度/);
+assert.match(bundle, /profile_probe: dataset\.profile_probe \|\| null/);
 assert.match(dashboardSource, /const jumpToPage = \(\) =>/);
 assert.match(dashboardSource, /Math\.min\(pages, Math\.max\(1, target\)\)/);
 assert.match(bundle, /probe-results:v1:/);

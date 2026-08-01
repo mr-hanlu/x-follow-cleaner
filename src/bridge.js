@@ -41,6 +41,7 @@
               schema_version: dataset.schema_version,
               source_user_id: dataset.source_user_id,
               updated_at: dataset.updated_at,
+              profile_probe: dataset.profile_probe || null,
               accounts: dataset.accounts,
               queue
             }
