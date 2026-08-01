@@ -88,6 +88,7 @@
       dataset.source_user_id = sourceUserId;
       let cursor = dataset.following_cursor || "";
       let page = Number(dataset.following_page || 0);
+      const lease = await app.acquireTaskLease(sourceUserId, "following", 90000);
       this.running = true;
       this.stopRequested = false;
       onProgress({
@@ -103,6 +104,9 @@
 
       try {
         while (!this.stopRequested && !dataset.completed_following) {
+          if (!await app.heartbeatTaskLease(lease)) {
+            throw new Error("关注列表导出任务租约已失效，任务停止。");
+          }
           const variables = { ...originalVariables, count: 100, includePromotedContent: false };
           if (cursor) variables.cursor = cursor;
           else delete variables.cursor;
@@ -152,7 +156,8 @@
           dataset.following_page = page;
           dataset.completed_following =
             !cursor || cursor === previousCursor || incoming.length === 0;
-          await app.saveDataset(dataset);
+          dataset = await app.saveBaseDataset(dataset);
+          await app.heartbeatTaskLease(lease);
           onProgress({
             phase: dataset.completed_following ? "complete" : "progress",
             message: `关注列表第 ${page} 页：本页 ${incoming.length} 人，累计 ${dataset.accounts.length} 人`,
@@ -183,6 +188,7 @@
         app.log("error", "Following", error.message || String(error));
         throw error;
       } finally {
+        await app.releaseTaskLease(lease);
         this.running = false;
       }
     },

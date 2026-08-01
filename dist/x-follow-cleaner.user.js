@@ -3,7 +3,7 @@
 // @name:zh-CN   X/Twitter 关注清理助手｜活跃分析与安全分批取消
 // @name:en      X Following Cleaner – Activity Review & Safe Batch Unfollow
 // @namespace    https://github.com/mr-hanlu/x-follow-cleaner
-// @version      0.7.1
+// @version      0.8.0
 // @description  导出关注列表、匿名探测公开主页活跃时间，并按确认队列分批取消关注。
 // @description:zh-CN 本地导出并筛选 X/Twitter 关注列表，匿名检查最近公开活动，按确认队列安全分批取消关注。
 // @description:en Export and review your X/Twitter following list locally, check recent public activity, and unfollow confirmed accounts in controlled batches.
@@ -37,6 +37,11 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
   const DATASET_KEY = "xfc:dataset:v1";
   const ACTIVE_SOURCE_KEY = "xfc:active-source:v1";
   const DATASET_PREFIX = "xfc:dataset:v2:";
+  const BASE_DATASET_PREFIX = "xfc:accounts:v3:";
+  const PROBE_RESULTS_PREFIX = "xfc:probe-results:v1:";
+  const REVIEWS_PREFIX = "xfc:reviews:v1:";
+  const UNFOLLOW_HISTORY_PREFIX = "xfc:unfollow-history:v1:";
+  const TASK_LEASE_PREFIX = "xfc:task-lease:v1:";
   const UNFOLLOW_TEMPLATE_KEY = "xfc:unfollow-template:v1";
   const UNFOLLOW_TEMPLATE_PREFIX = "xfc:unfollow-template:v2:";
   const UNFOLLOW_QUEUE_KEY = "xfc:unfollow-queue:v1";
@@ -48,6 +53,11 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
     DATASET_KEY,
     ACTIVE_SOURCE_KEY,
     DATASET_PREFIX,
+    BASE_DATASET_PREFIX,
+    PROBE_RESULTS_PREFIX,
+    REVIEWS_PREFIX,
+    UNFOLLOW_HISTORY_PREFIX,
+    TASK_LEASE_PREFIX,
     UNFOLLOW_TEMPLATE_KEY,
     UNFOLLOW_TEMPLATE_PREFIX,
     UNFOLLOW_QUEUE_KEY,
@@ -122,8 +132,46 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
   };
 
   app.datasetKey = (sourceUserId) => `${DATASET_PREFIX}${sourceUserId}`;
+  app.baseDatasetKey = (sourceUserId) => `${BASE_DATASET_PREFIX}${sourceUserId}`;
+  app.probeResultsKey = (sourceUserId) => `${PROBE_RESULTS_PREFIX}${sourceUserId}`;
+  app.reviewsKey = (sourceUserId) => `${REVIEWS_PREFIX}${sourceUserId}`;
+  app.unfollowHistoryKey = (sourceUserId) => `${UNFOLLOW_HISTORY_PREFIX}${sourceUserId}`;
+  app.taskLeaseKey = (sourceUserId, taskType) => `${TASK_LEASE_PREFIX}${sourceUserId}:${taskType}`;
   app.queueKey = (sourceUserId) => `${UNFOLLOW_QUEUE_PREFIX}${sourceUserId}`;
   app.templateKey = (sourceUserId) => `${UNFOLLOW_TEMPLATE_PREFIX}${sourceUserId}`;
+
+  const BASE_ACCOUNT_FIELDS = [
+    "account_id", "screen_name", "name", "profile_url", "is_blue_verified",
+    "verified_type", "followers_count", "following_count", "protected"
+  ];
+  const PROBE_FIELDS = [
+    "last_post_at", "inactive_days", "last_post_id", "last_post_url",
+    "data_status", "fetched_at"
+  ];
+  const UNFOLLOW_FIELDS = [
+    "unfollow_status", "unfollowed_at", "unfollow_http_status",
+    "unfollow_error", "unfollow_attempt_count", "unfollow_started_at"
+  ];
+
+  function pick(value, fields) {
+    const output = {};
+    for (const field of fields) {
+      if (Object.prototype.hasOwnProperty.call(value || {}, field)) output[field] = value[field];
+    }
+    return output;
+  }
+
+  function validSource(sourceUserId) {
+    return /^\d+$/.test(String(sourceUserId || ""));
+  }
+
+  function mapEnvelope(values = {}, extra = {}) {
+    return { ...extra, updated_at: app.nowIso(), values };
+  }
+
+  function emptyEnvelope() {
+    return { updated_at: "", values: {} };
+  }
 
   app.getActiveSourceId = async function () {
     return String(await app.gmGet(ACTIVE_SOURCE_KEY, "") || "");
@@ -138,7 +186,7 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
 
   app.emptyDataset = function (sourceUserId = "") {
     return {
-      schema_version: "x-follow-cleaner-v1",
+      schema_version: "x-follow-cleaner-v3",
       source_user_id: String(sourceUserId || ""),
       updated_at: app.nowIso(),
       completed_following: false,
@@ -146,63 +194,303 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
     };
   };
 
-  app.loadDataset = async function (sourceUserId = "") {
-    let resolvedSource = String(sourceUserId || "");
-    if (!resolvedSource) resolvedSource = await app.getActiveSourceId();
-    if (resolvedSource) {
-      const isolated = await app.gmGet(app.datasetKey(resolvedSource), null);
-      if (isolated && Array.isArray(isolated.accounts)) return isolated;
-    }
+  async function migrateLegacyDataset(sourceUserId) {
+    if (!validSource(sourceUserId)) return null;
+    const existingBase = await app.gmGet(app.baseDatasetKey(sourceUserId), null);
+    if (existingBase && Array.isArray(existingBase.accounts)) return existingBase;
 
-    const legacy = await app.gmGet(DATASET_KEY, null);
-    if (legacy && Array.isArray(legacy.accounts) && legacy.source_user_id) {
-      const legacySource = String(legacy.source_user_id);
-      if (!resolvedSource || resolvedSource === legacySource) {
-        await app.gmSet(app.datasetKey(legacySource), legacy);
-        await app.setActiveSourceId(legacySource);
+    let legacy = await app.gmGet(app.datasetKey(sourceUserId), null);
+    if (!legacy || !Array.isArray(legacy.accounts)) {
+      const globalLegacy = await app.gmGet(DATASET_KEY, null);
+      if (globalLegacy && Array.isArray(globalLegacy.accounts) &&
+          String(globalLegacy.source_user_id || "") === sourceUserId) {
+        legacy = globalLegacy;
+        await app.gmSet(app.datasetKey(sourceUserId), globalLegacy);
         const legacyQueue = await app.gmGet(UNFOLLOW_QUEUE_KEY, null);
-        if (Array.isArray(legacyQueue)) {
-          await app.gmSet(app.queueKey(legacySource), legacyQueue);
-        }
+        if (Array.isArray(legacyQueue)) await app.gmSet(app.queueKey(sourceUserId), legacyQueue);
         const legacyTemplate = await app.gmGet(UNFOLLOW_TEMPLATE_KEY, null);
-        if (legacyTemplate) {
-          await app.gmSet(app.templateKey(legacySource), legacyTemplate);
-        }
+        if (legacyTemplate) await app.gmSet(app.templateKey(sourceUserId), legacyTemplate);
         await app.gmDelete(DATASET_KEY);
         await app.gmDelete(UNFOLLOW_QUEUE_KEY);
         await app.gmDelete(UNFOLLOW_TEMPLATE_KEY);
-        app.log("info", "Storage", "旧版数据已迁移到账号隔离存储", {
-          source_user_id: legacySource,
-          accounts: legacy.accounts.length
-        });
-        return legacy;
       }
     }
-    return app.emptyDataset(resolvedSource);
+    if (!legacy || !Array.isArray(legacy.accounts)) return null;
+
+    const probeValues = {};
+    const reviewValues = {};
+    const historyValues = {};
+    for (const account of legacy.accounts) {
+      const id = String(account.account_id || "");
+      if (!validSource(id)) continue;
+      const probe = pick(account, PROBE_FIELDS);
+      if (Object.keys(probe).length) probeValues[id] = probe;
+      if (["", "keep", "remove", "done"].includes(String(account.review_status || "")) &&
+          account.review_status) reviewValues[id] = String(account.review_status);
+      const history = pick(account, UNFOLLOW_FIELDS);
+      if (Object.values(history).some((value) => value !== "" && value != null)) historyValues[id] = history;
+    }
+    const existingQueue = await app.gmGet(app.queueKey(sourceUserId), []);
+    for (const item of Array.isArray(existingQueue) ? existingQueue : []) {
+      const id = String(item.account_id || "");
+      if (validSource(id) && historyValues[id]?.unfollow_status !== "success") reviewValues[id] = "remove";
+    }
+    await app.gmSet(app.probeResultsKey(sourceUserId), mapEnvelope(probeValues, {
+      task: legacy.profile_probe || null
+    }));
+    await app.gmSet(app.reviewsKey(sourceUserId), mapEnvelope(reviewValues));
+    await app.gmSet(app.unfollowHistoryKey(sourceUserId), mapEnvelope(historyValues));
+    const base = {
+      ...legacy,
+      schema_version: "x-follow-cleaner-v3",
+      accounts: legacy.accounts.map((account) => pick(account, BASE_ACCOUNT_FIELDS)),
+      migrated_from: legacy.schema_version || "x-follow-cleaner-v1",
+      migrated_at: app.nowIso(),
+      updated_at: app.nowIso()
+    };
+    delete base.profile_probe;
+    await app.gmSet(app.baseDatasetKey(sourceUserId), base);
+    app.log("info", "Storage", "账号数据已迁移到分层存储", {
+      source_user_id: sourceUserId,
+      accounts: base.accounts.length
+    });
+    return base;
+  }
+
+  app.loadDataset = async function (sourceUserId = "") {
+    let resolvedSource = String(sourceUserId || "");
+    if (!resolvedSource) resolvedSource = await app.getActiveSourceId();
+    if (!resolvedSource) {
+      const legacy = await app.gmGet(DATASET_KEY, null);
+      if (legacy?.source_user_id) {
+        resolvedSource = String(legacy.source_user_id);
+        await app.setActiveSourceId(resolvedSource);
+      }
+    }
+    if (!validSource(resolvedSource)) return app.emptyDataset(resolvedSource);
+    const base = await migrateLegacyDataset(resolvedSource) ||
+      await app.gmGet(app.baseDatasetKey(resolvedSource), null);
+    if (!base || !Array.isArray(base.accounts)) return app.emptyDataset(resolvedSource);
+    const [probeStore, reviewStore, historyStore] = await Promise.all([
+      app.gmGet(app.probeResultsKey(resolvedSource), emptyEnvelope()),
+      app.gmGet(app.reviewsKey(resolvedSource), emptyEnvelope()),
+      app.gmGet(app.unfollowHistoryKey(resolvedSource), emptyEnvelope())
+    ]);
+    const accounts = base.accounts.map((account) => {
+      const id = String(account.account_id || "");
+      const probe = probeStore.values?.[id] || {};
+      const history = historyStore.values?.[id] || {};
+      const processed = history.unfollow_status === "success" || Boolean(history.unfollowed_at);
+      return {
+        ...account,
+        ...probe,
+        review_status: processed ? "done" : String(reviewStore.values?.[id] || ""),
+        ...history
+      };
+    });
+    const updatedAt = [base.updated_at, probeStore.updated_at, reviewStore.updated_at, historyStore.updated_at]
+      .filter(Boolean).sort().at(-1) || app.nowIso();
+    return {
+      ...base,
+      schema_version: "x-follow-cleaner-v3",
+      updated_at: updatedAt,
+      profile_probe: probeStore.task || null,
+      accounts
+    };
+  };
+
+  app.saveBaseDataset = async function (dataset) {
+    const sourceUserId = String(dataset.source_user_id || "");
+    if (!validSource(sourceUserId)) throw new Error("数据集缺少有效 source_user_id，无法保存。");
+    const base = {
+      ...dataset,
+      schema_version: "x-follow-cleaner-v3",
+      updated_at: app.nowIso(),
+      accounts: dataset.accounts.map((account) => pick(account, BASE_ACCOUNT_FIELDS))
+    };
+    delete base.profile_probe;
+    await app.gmSet(app.baseDatasetKey(sourceUserId), base);
+    app.emit("dataset", { source_user_id: sourceUserId, kind: "base", updated_at: base.updated_at });
+    return base;
   };
 
   app.saveDataset = async function (dataset) {
     const sourceUserId = String(dataset.source_user_id || "");
-    if (!/^\d+$/.test(sourceUserId)) {
-      throw new Error("数据集缺少有效 source_user_id，无法保存。");
-    }
-    dataset.schema_version = "x-follow-cleaner-v1";
-    dataset.updated_at = app.nowIso();
+    if (!validSource(sourceUserId)) throw new Error("数据集缺少有效 source_user_id，无法保存。");
     await app.setActiveSourceId(sourceUserId);
-    await app.gmSet(app.datasetKey(sourceUserId), dataset);
-    app.emit("dataset", {
-      total: dataset.accounts.length,
-      updated_at: dataset.updated_at
-    });
-    return dataset;
+    await app.saveBaseDataset(dataset);
+    await app.saveProbeResults(sourceUserId, dataset.accounts, dataset.profile_probe || null, { replace: true });
+    await app.saveReviewChanges(sourceUserId, dataset.accounts.map((account) => ({
+      account_id: account.account_id,
+      review_status: account.review_status || ""
+    })), { replace: true });
+    await app.saveUnfollowResults(sourceUserId, dataset.accounts, { replace: true });
+    return app.loadDataset(sourceUserId);
+  };
+
+  app.saveProbeResults = async function (sourceUserId, results, task, options = {}) {
+    if (!validSource(sourceUserId)) throw new Error("没有活动账号，无法保存探测结果。");
+    const current = options.replace
+      ? mapEnvelope()
+      : await app.gmGet(app.probeResultsKey(sourceUserId), emptyEnvelope());
+    const values = { ...(current.values || {}) };
+    for (const result of results || []) {
+      const id = String(result.account_id || "");
+      if (!validSource(id)) continue;
+      values[id] = { ...(values[id] || {}), ...pick(result, PROBE_FIELDS) };
+    }
+    const next = mapEnvelope(values, { task: task === undefined ? current.task || null : task });
+    await app.gmSet(app.probeResultsKey(sourceUserId), next);
+    app.emit("dataset", { source_user_id: sourceUserId, kind: "probe", updated_at: next.updated_at });
+    return next;
+  };
+
+  app.saveProbeTask = async function (sourceUserId, task) {
+    return app.saveProbeResults(sourceUserId, [], task);
+  };
+
+  app.saveReviewChanges = async function (sourceUserId, changes, options = {}) {
+    if (!validSource(sourceUserId)) throw new Error("没有活动账号，无法保存审核标记。");
+    const current = options.replace
+      ? mapEnvelope()
+      : await app.gmGet(app.reviewsKey(sourceUserId), emptyEnvelope());
+    const values = { ...(current.values || {}) };
+    for (const change of changes || []) {
+      const id = String(change.account_id || "");
+      const status = String(change.review_status || "");
+      if (!validSource(id) || !["", "keep", "remove", "done"].includes(status)) continue;
+      if (status) values[id] = status;
+      else delete values[id];
+    }
+    const next = mapEnvelope(values);
+    await app.gmSet(app.reviewsKey(sourceUserId), next);
+    app.emit("dataset", { source_user_id: sourceUserId, kind: "reviews", updated_at: next.updated_at });
+    return next;
+  };
+
+  app.loadUnfollowHistory = async function (sourceUserId = "") {
+    const resolvedSource = String(sourceUserId || await app.getActiveSourceId());
+    if (!validSource(resolvedSource)) return {};
+    return (await app.gmGet(app.unfollowHistoryKey(resolvedSource), emptyEnvelope())).values || {};
+  };
+
+  app.saveUnfollowResults = async function (sourceUserId, results, options = {}) {
+    if (!validSource(sourceUserId)) throw new Error("没有活动账号，无法保存取消历史。");
+    const current = options.replace
+      ? mapEnvelope()
+      : await app.gmGet(app.unfollowHistoryKey(sourceUserId), emptyEnvelope());
+    const values = { ...(current.values || {}) };
+    for (const result of results || []) {
+      const id = String(result.account_id || "");
+      if (!validSource(id)) continue;
+      const patch = pick(result, UNFOLLOW_FIELDS);
+      if (Object.values(patch).some((value) => value !== "" && value != null)) {
+        values[id] = { ...(values[id] || {}), ...patch };
+      } else if (options.replace) {
+        delete values[id];
+      }
+    }
+    const next = mapEnvelope(values);
+    await app.gmSet(app.unfollowHistoryKey(sourceUserId), next);
+    app.emit("dataset", { source_user_id: sourceUserId, kind: "unfollow", updated_at: next.updated_at });
+    return next;
+  };
+
+  app.prepareUnfollowRetries = async function (sourceUserId, reviewChanges) {
+    const retryIds = new Set((reviewChanges || [])
+      .filter((change) => String(change.review_status || "") === "remove")
+      .map((change) => String(change.account_id || "")));
+    if (!retryIds.size) return 0;
+    const history = await app.loadUnfollowHistory(sourceUserId);
+    const retries = Array.from(retryIds)
+      .filter((id) => history[id]?.unfollow_status === "needs_review")
+      .map((id) => ({
+        account_id: id,
+        unfollow_status: "failed",
+        unfollow_error: "用户核验后选择重新执行"
+      }));
+    if (retries.length) await app.saveUnfollowResults(sourceUserId, retries);
+    return retries.length;
+  };
+
+  app.acquireTaskLease = async function (sourceUserId, taskType, ttlMs = 45000) {
+    if (!validSource(sourceUserId)) throw new Error("没有活动账号，无法启动任务。");
+    const key = app.taskLeaseKey(sourceUserId, taskType);
+    const now = Date.now();
+    const current = await app.gmGet(key, null);
+    if (current?.owner_id && Number(current.expires_at || 0) > now) {
+      const labels = { unfollow: "取消关注", "profile-probe": "匿名探测", following: "关注列表导出" };
+      throw new Error(`另一个页面正在执行${labels[taskType] || taskType}任务。`);
+    }
+    const ownerId = `${now}-${Math.random().toString(36).slice(2)}-${location.hostname}`;
+    const lease = {
+      owner_id: ownerId,
+      task_type: taskType,
+      source_user_id: sourceUserId,
+      started_at: app.nowIso(),
+      heartbeat_at: app.nowIso(),
+      expires_at: now + ttlMs
+    };
+    await app.gmSet(key, lease);
+    await app.sleep(20 + Math.random() * 30);
+    const verified = await app.gmGet(key, null);
+    if (verified?.owner_id !== ownerId) throw new Error("任务启动冲突，请稍后重试。");
+    return { key, ownerId, ttlMs, lastHeartbeat: now };
+  };
+
+  app.heartbeatTaskLease = async function (lease) {
+    if (!lease) return false;
+    const current = await app.gmGet(lease.key, null);
+    if (current?.owner_id !== lease.ownerId) return false;
+    const now = Date.now();
+    if (now - Number(lease.lastHeartbeat || 0) < Math.min(20000, lease.ttlMs / 3)) return true;
+    current.heartbeat_at = app.nowIso();
+    current.expires_at = now + lease.ttlMs;
+    await app.gmSet(lease.key, current);
+    lease.lastHeartbeat = now;
+    return true;
+  };
+
+  app.releaseTaskLease = async function (lease) {
+    if (!lease) return;
+    const current = await app.gmGet(lease.key, null);
+    if (current?.owner_id === lease.ownerId) await app.gmDelete(lease.key);
+  };
+
+  app.activeTaskLeases = async function (sourceUserId) {
+    if (!validSource(sourceUserId)) return [];
+    const taskTypes = ["following", "profile-probe", "unfollow"];
+    const leases = await Promise.all(taskTypes.map((taskType) =>
+      app.gmGet(app.taskLeaseKey(sourceUserId, taskType), null)
+    ));
+    return leases.filter((lease) => lease?.owner_id && Number(lease.expires_at || 0) > Date.now());
   };
 
   app.loadUnfollowQueue = async function (sourceUserId = "") {
     const resolvedSource = String(sourceUserId || await app.getActiveSourceId());
     if (!resolvedSource) return [];
-    const queue = await app.gmGet(app.queueKey(resolvedSource), null);
-    if (Array.isArray(queue)) return queue;
-    return [];
+    const storedQueue = await app.gmGet(app.queueKey(resolvedSource), []);
+    const statusById = new Map((Array.isArray(storedQueue) ? storedQueue : []).map((item) => [
+      String(item.account_id || ""), item
+    ]));
+    const dataset = await app.loadDataset(resolvedSource);
+    return dataset.accounts
+      .filter((account) => account.review_status === "remove" &&
+        account.unfollow_status !== "success" && !account.unfollowed_at)
+      .map((account) => {
+        const previous = statusById.get(String(account.account_id)) || {};
+        const durableStatus = ["failed", "executing", "needs_review"].includes(account.unfollow_status)
+          ? account.unfollow_status
+          : "";
+        return {
+          ...previous,
+          account_id: String(account.account_id),
+          screen_name: account.screen_name,
+          status: durableStatus || (["failed", "executing", "needs_review"].includes(previous.status)
+            ? previous.status
+            : "pending")
+        };
+      });
   };
 
   app.saveUnfollowQueue = async function (queue, sourceUserId = "") {
@@ -233,6 +521,13 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
     const sourceUserId = await app.getActiveSourceId();
     if (!sourceUserId) return "";
     await app.gmDelete(app.datasetKey(sourceUserId));
+    await app.gmDelete(app.baseDatasetKey(sourceUserId));
+    await app.gmDelete(app.probeResultsKey(sourceUserId));
+    await app.gmDelete(app.reviewsKey(sourceUserId));
+    await app.gmDelete(app.unfollowHistoryKey(sourceUserId));
+    await app.gmDelete(app.taskLeaseKey(sourceUserId, "profile-probe"));
+    await app.gmDelete(app.taskLeaseKey(sourceUserId, "unfollow"));
+    await app.gmDelete(app.taskLeaseKey(sourceUserId, "following"));
     await app.gmDelete(app.queueKey(sourceUserId));
     await app.gmDelete(app.templateKey(sourceUserId));
     await app.gmDelete(ACTIVE_SOURCE_KEY);
@@ -501,6 +796,7 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
       dataset.source_user_id = sourceUserId;
       let cursor = dataset.following_cursor || "";
       let page = Number(dataset.following_page || 0);
+      const lease = await app.acquireTaskLease(sourceUserId, "following", 90000);
       this.running = true;
       this.stopRequested = false;
       onProgress({
@@ -516,6 +812,9 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
 
       try {
         while (!this.stopRequested && !dataset.completed_following) {
+          if (!await app.heartbeatTaskLease(lease)) {
+            throw new Error("关注列表导出任务租约已失效，任务停止。");
+          }
           const variables = { ...originalVariables, count: 100, includePromotedContent: false };
           if (cursor) variables.cursor = cursor;
           else delete variables.cursor;
@@ -565,7 +864,8 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
           dataset.following_page = page;
           dataset.completed_following =
             !cursor || cursor === previousCursor || incoming.length === 0;
-          await app.saveDataset(dataset);
+          dataset = await app.saveBaseDataset(dataset);
+          await app.heartbeatTaskLease(lease);
           onProgress({
             phase: dataset.completed_following ? "complete" : "progress",
             message: `关注列表第 ${page} 页：本页 ${incoming.length} 人，累计 ${dataset.accounts.length} 人`,
@@ -596,6 +896,7 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
         app.log("error", "Following", error.message || String(error));
         throw error;
       } finally {
+        await app.releaseTaskLease(lease);
         this.running = false;
       }
     },
@@ -690,6 +991,8 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
       if (this.running) throw new Error("匿名主页探测已经在运行。");
       let dataset = await app.loadDataset();
       if (!dataset.accounts.length) throw new Error("请先导出关注列表。");
+      const sourceUserId = String(dataset.source_user_id || "");
+      const lease = await app.acquireTaskLease(sourceUserId, "profile-probe", 90000);
       const intervalMs = Math.max(500, Number(options.intervalMs || 3000));
       const limit = Math.max(0, Number(options.limit || 0));
       const concurrency = Math.min(8, Math.max(1, Number(options.concurrency || 1)));
@@ -712,6 +1015,8 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
       let nextTargetIndex = 0;
       let fatalError = null;
       let saveChain = Promise.resolve();
+      let pendingResults = [];
+      let flushTimer = null;
       dataset.profile_probe = {
         status: targets.length ? "running" : "complete",
         completed: overallCompleted(),
@@ -723,7 +1028,13 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
         started_at: app.nowIso(),
         updated_at: app.nowIso()
       };
-      await app.saveDataset(dataset);
+      try {
+        await app.saveProbeTask(sourceUserId, dataset.profile_probe);
+      } catch (error) {
+        this.running = false;
+        await app.releaseTaskLease(lease);
+        throw error;
+      }
       onProgress({
         phase: targets.length ? "start" : "complete",
         message: targets.length
@@ -741,37 +1052,84 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
         retry_failed: retryFailed
       });
 
-      const commitResult = (target, result) => {
+      const flushPending = (force = false) => {
+        if (!pendingResults.length) return saveChain;
+        if (!force && pendingResults.length < 5) return saveChain;
+        if (flushTimer) clearTimeout(flushTimer);
+        flushTimer = null;
+        const batch = pendingResults;
+        pendingResults = [];
+        const taskSnapshot = { ...dataset.profile_probe, updated_at: app.nowIso() };
         saveChain = saveChain.then(async () => {
-          app.upsertAccounts(dataset, [result]);
-          const currentOverall = overallCompleted();
-          dataset.profile_probe = {
-            ...dataset.profile_probe,
-            status: "running",
-            completed: currentOverall,
-            total: overallTotal,
-            batch_completed: completed + 1,
-            current_screen_name: target.screen_name,
-            updated_at: app.nowIso()
-          };
-          await app.saveDataset(dataset);
-          completed += 1;
-          onProgress({
-            phase: "progress",
-            message: `已探测 ${currentOverall}/${overallTotal} · 本轮 ${completed}/${targets.length}：@${target.screen_name} ${result.data_status}`,
-            current: currentOverall,
-            total: overallTotal,
-            batch_current: completed,
-            batch_total: targets.length
-          });
-          app.log(
-            result.data_status === "ok" ? "info" : "warn",
-            "ProfileProbe",
-            `@${target.screen_name} ${result.data_status}`,
-            { current: completed, total: targets.length, concurrency }
-          );
+          await app.saveProbeResults(sourceUserId, batch, taskSnapshot);
+          if (!await app.heartbeatTaskLease(lease)) throw new Error("匿名探测任务租约已失效，任务停止。");
         });
         return saveChain;
+      };
+
+      const scheduleFlush = () => {
+        if (flushTimer) return;
+        flushTimer = setTimeout(() => {
+          flushTimer = null;
+          flushPending(true).catch((error) => {
+            fatalError ||= error;
+          });
+        }, 2000);
+      };
+
+      const flushForLifecycle = (event) => {
+        if (event?.type === "visibilitychange" && document.visibilityState !== "hidden") return;
+        flushPending(true).catch((error) => app.log(
+          "error", "ProfileProbe", `后台切换时保存失败：${error.message || error}`
+        ));
+      };
+      if (typeof document !== "undefined" && document.addEventListener) {
+        document.addEventListener("visibilitychange", flushForLifecycle);
+        document.addEventListener("freeze", flushForLifecycle);
+        window.addEventListener("pagehide", flushForLifecycle);
+      }
+
+      const commitResult = async (target, result) => {
+        const account = dataset.accounts.find((item) => String(item.account_id) === String(target.account_id));
+        if (account) {
+          Object.assign(account, {
+            last_post_at: result.last_post_at,
+            inactive_days: result.inactive_days,
+            last_post_id: result.last_post_id,
+            last_post_url: result.last_post_url,
+            data_status: result.data_status,
+            fetched_at: result.fetched_at
+          });
+        }
+        completed += 1;
+        const currentOverall = overallCompleted();
+        dataset.profile_probe = {
+          ...dataset.profile_probe,
+          status: "running",
+          completed: currentOverall,
+          total: overallTotal,
+          batch_completed: completed,
+          current_screen_name: target.screen_name,
+          updated_at: app.nowIso()
+        };
+        pendingResults.push(result);
+        scheduleFlush();
+        if (pendingResults.length >= 5) await flushPending(true);
+        else if (!await app.heartbeatTaskLease(lease)) throw new Error("匿名探测任务租约已失效，任务停止。");
+        onProgress({
+          phase: "progress",
+          message: `已探测 ${currentOverall}/${overallTotal} · 本轮 ${completed}/${targets.length}：@${target.screen_name} ${result.data_status}`,
+          current: currentOverall,
+          total: overallTotal,
+          batch_current: completed,
+          batch_total: targets.length
+        });
+        app.log(
+          result.data_status === "ok" ? "info" : "warn",
+          "ProfileProbe",
+          `@${target.screen_name} ${result.data_status}`,
+          { current: completed, total: targets.length, concurrency }
+        );
       };
 
       const worker = async (workerIndex) => {
@@ -781,6 +1139,10 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
           );
         }
         while (!this.stopRequested && !fatalError) {
+          if (!await app.heartbeatTaskLease(lease)) {
+            fatalError = new Error("匿名探测任务租约已失效，任务停止。");
+            return;
+          }
           const targetIndex = nextTargetIndex;
           nextTargetIndex += 1;
           if (targetIndex >= targets.length) return;
@@ -850,6 +1212,7 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
         await Promise.all(
           Array.from({ length: workerCount }, (_, index) => worker(index))
         );
+        await flushPending(true);
         await saveChain;
         if (fatalError) throw fatalError;
         if (this.stopRequested) {
@@ -860,7 +1223,7 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
             batch_completed: completed,
             updated_at: app.nowIso()
           };
-          await app.saveDataset(dataset);
+          await app.saveProbeTask(sourceUserId, dataset.profile_probe);
           onProgress({
             phase: "stopped",
             message: `已暂停 · 整体已探测 ${overallCompleted()}/${overallTotal} · 本轮完成 ${completed}/${targets.length}`,
@@ -883,7 +1246,7 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
             batch_completed: completed,
             updated_at: app.nowIso()
           };
-          await app.saveDataset(dataset);
+          await app.saveProbeTask(sourceUserId, dataset.profile_probe);
           onProgress({
             phase: allAttempted ? "complete" : "stopped",
             message: allAttempted
@@ -897,6 +1260,8 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
         }
         return dataset;
       } catch (error) {
+        await flushPending(true);
+        await saveChain;
         dataset.profile_probe = {
           ...dataset.profile_probe,
           status: "error",
@@ -905,13 +1270,20 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
           error: error.message || String(error),
           updated_at: app.nowIso()
         };
-        await app.saveDataset(dataset);
+        await app.saveProbeTask(sourceUserId, dataset.profile_probe);
         app.log("error", "ProfileProbe", error.message || String(error), {
           completed,
           total: targets.length
         });
         throw error;
       } finally {
+        if (flushTimer) clearTimeout(flushTimer);
+        if (typeof document !== "undefined" && document.removeEventListener) {
+          document.removeEventListener("visibilitychange", flushForLifecycle);
+          document.removeEventListener("freeze", flushForLifecycle);
+          window.removeEventListener("pagehide", flushForLifecycle);
+        }
+        await app.releaseTaskLease(lease);
         this.running = false;
       }
     },
@@ -1006,7 +1378,7 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
       return template;
     },
 
-    async queueAccounts(accounts) {
+    async queueAccounts(accounts = null) {
       const dataset = await app.loadDataset();
       const sourceUserId = String(dataset.source_user_id || "");
       if (!sourceUserId) throw new Error("没有活动账号，无法建立取消队列。");
@@ -1016,7 +1388,10 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
       const queue = [];
       let ignoredProcessed = 0;
       let ignoredUnknown = 0;
-      for (const value of accounts) {
+      const selected = Array.isArray(accounts)
+        ? accounts
+        : dataset.accounts.filter((account) => account.review_status === "remove");
+      for (const value of selected) {
         const id = String(value.account_id || value || "");
         if (!/^\d+$/.test(id) || !known.has(id)) {
           ignoredUnknown += 1;
@@ -1027,24 +1402,23 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
           account.unfollow_status === "success" ||
           Boolean(account.unfollowed_at);
         if (processed) {
-          account.review_status = "done";
           ignoredProcessed += 1;
           continue;
         }
-        account.review_status = "remove";
         const previousStatus = previous.get(id)?.status;
         queue.push({
           account_id: id,
           screen_name: account.screen_name,
-          status: previousStatus === "failed" ? "failed" : "pending"
+          status: ["failed", "executing", "needs_review"].includes(previousStatus)
+            ? previousStatus
+            : "pending"
         });
       }
-      await app.saveDataset(dataset);
       await app.saveUnfollowQueue(queue, sourceUserId);
       return {
         queue,
         stats: {
-          selected: accounts.length,
+          selected: selected.length,
           queued: queue.length,
           failed: queue.filter((item) => item.status === "failed").length,
           ignored_processed: ignoredProcessed,
@@ -1083,30 +1457,80 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
           source_user_id: sourceUserId
         });
       }
-      let queue = await app.loadUnfollowQueue(sourceUserId);
+      const lease = await app.acquireTaskLease(sourceUserId, "unfollow", 90000);
       const batchSize = Math.min(50, Math.max(1, Number(options.batchSize || 10)));
       const intervalMs = Math.max(1000, Number(options.intervalMs || 5000));
-      const targets = queue.filter((item) => item.status !== "success").slice(0, batchSize);
-      if (!targets.length) throw new Error("没有待取消账号。");
-      const map = new Map(dataset.accounts.map((account) => [String(account.account_id), account]));
+      let queue;
+      let targets;
+      try {
+        queue = await app.loadUnfollowQueue(sourceUserId);
+        const interrupted = queue.filter((item) => item.status === "executing");
+        if (interrupted.length) {
+          await app.saveUnfollowResults(sourceUserId, interrupted.map((item) => ({
+            account_id: item.account_id,
+            unfollow_status: "needs_review",
+            unfollow_error: "上次任务在请求完成前中断，请核验当前关注状态。"
+          })));
+          queue = await app.loadUnfollowQueue(sourceUserId);
+          await app.saveUnfollowQueue(queue, sourceUserId);
+        }
+        targets = queue.filter((item) =>
+          !["success", "executing", "needs_review"].includes(item.status)
+        ).slice(0, batchSize);
+        if (!targets.length) {
+          const needsReview = queue.filter((item) => item.status === "needs_review").length;
+          throw new Error(needsReview
+            ? `有 ${needsReview} 个账号的上次执行结果待人工核验。确认仍在关注后，请在筛选页重新标记“待取消”再发送。`
+            : "没有待取消账号。");
+        }
+      } catch (error) {
+        await app.releaseTaskLease(lease);
+        throw error;
+      }
       this.running = true;
       this.stopRequested = false;
       let batchSucceeded = 0;
-      onProgress({
-        phase: "start",
-        message: `取消关注任务准备完成，本批 ${targets.length} 人`,
-        current: 0,
-        total: targets.length
-      });
-      app.log("info", "Unfollow", "任务开始", {
-        batch_size: targets.length,
-        interval_ms: intervalMs
-      });
-
       try {
+        onProgress({
+          phase: "start",
+          message: `取消关注任务准备完成，本批 ${targets.length} 人`,
+          current: 0,
+          total: targets.length
+        });
+        app.log("info", "Unfollow", "任务开始", {
+          batch_size: targets.length,
+          interval_ms: intervalMs
+        });
         for (let index = 0; index < targets.length; index += 1) {
           if (this.stopRequested) break;
+          if (!await app.heartbeatTaskLease(lease)) {
+            throw new Error("取消关注任务租约已失效，任务停止。");
+          }
           const target = targets[index];
+          const latestDataset = await app.loadDataset(sourceUserId);
+          const latestAccount = latestDataset.accounts.find((account) =>
+            String(account.account_id) === String(target.account_id)
+          );
+          if (!latestAccount || latestAccount.review_status !== "remove" ||
+              latestAccount.unfollow_status === "success" || latestAccount.unfollowed_at) {
+            queue = await app.loadUnfollowQueue(sourceUserId);
+            await app.saveUnfollowQueue(queue, sourceUserId);
+            continue;
+          }
+          const previousHistory = (await app.loadUnfollowHistory(sourceUserId))[target.account_id] || {};
+          const attemptCount = Number(previousHistory.unfollow_attempt_count || 0) + 1;
+          const startedAt = app.nowIso();
+          await app.saveUnfollowResults(sourceUserId, [{
+            account_id: target.account_id,
+            unfollow_status: "executing",
+            unfollow_started_at: startedAt,
+            unfollow_attempt_count: attemptCount,
+            unfollow_error: ""
+          }]);
+          queue = (await app.loadUnfollowQueue(sourceUserId)).map((item) =>
+            item.account_id === target.account_id ? { ...item, status: "executing" } : item
+          );
+          await app.saveUnfollowQueue(queue, sourceUserId);
           onProgress({
             phase: "request",
             message: `正在处理 ${index + 1}/${targets.length}：@${target.screen_name || target.account_id}`,
@@ -1125,6 +1549,7 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
           const body = new URLSearchParams({ ...template.params, user_id: target.account_id });
           let status = "failed";
           let httpStatus = 0;
+          let requestError = "";
           try {
             const response = await fetch(template.url, {
               method: "POST",
@@ -1134,32 +1559,41 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
             });
             httpStatus = response.status;
             if (response.status === 429) {
-              throw new Error("取消关注遇到 429，已保存进度并停止。");
+              status = "failed";
+              requestError = "HTTP 429";
+            } else {
+              status = response.ok ? "success" : "failed";
+              if (!response.ok) requestError = `HTTP ${response.status}`;
             }
-            status = response.ok ? "success" : "failed";
           } catch (error) {
-            if (String(error.message || error).includes("429")) throw error;
+            status = "needs_review";
+            requestError = error.message || String(error);
           }
+          await app.saveUnfollowResults(sourceUserId, [{
+            account_id: target.account_id,
+            unfollow_status: status,
+            unfollow_http_status: httpStatus || "",
+            unfollowed_at: status === "success" ? app.nowIso() : "",
+            unfollow_error: requestError,
+            unfollow_started_at: startedAt,
+            unfollow_attempt_count: attemptCount
+          }]);
           const latestQueue = await app.loadUnfollowQueue(sourceUserId);
           if (status === "success") {
             queue = latestQueue.filter((item) => item.account_id !== target.account_id);
           } else {
             queue = latestQueue;
             const queueItem = queue.find((item) => item.account_id === target.account_id);
-            if (queueItem) queueItem.status = status;
-          }
-          const account = map.get(target.account_id);
-          if (account) {
-            account.unfollow_status = status;
-            account.unfollow_http_status = httpStatus || "";
-            if (status === "success") {
-              batchSucceeded += 1;
-              account.unfollowed_at = app.nowIso();
-              account.review_status = "done";
+            if (queueItem) {
+              queueItem.status = status;
+              queueItem.last_error = requestError;
             }
           }
+          if (status === "success") batchSucceeded += 1;
           await app.saveUnfollowQueue(queue, sourceUserId);
-          await app.saveDataset(dataset);
+          if (!await app.heartbeatTaskLease(lease)) {
+            throw new Error("取消关注任务租约已失效，任务停止。");
+          }
           onProgress({
             phase: index + 1 === targets.length ? "complete" : "progress",
             message: `取消关注 ${index + 1}/${targets.length}：@${target.screen_name || target.account_id} ${status}`,
@@ -1171,6 +1605,9 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
             current: index + 1,
             total: targets.length
           });
+          if (httpStatus === 429) {
+            throw new Error("取消关注遇到 429，已保存进度并停止。");
+          }
           if (index + 1 < targets.length) await app.sleep(intervalMs);
         }
         if (this.stopRequested) {
@@ -1190,6 +1627,7 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
         app.log("error", "Unfollow", error.message || String(error));
         throw error;
       } finally {
+        await app.releaseTaskLease(lease);
         this.running = false;
       }
     },
@@ -1206,10 +1644,34 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
   app.bridge = {
     install() {
       if (location.hostname === "x.com") return;
+      const watchedKeys = new Set();
+      let changeTimer = null;
+      const scheduleDataset = () => {
+        clearTimeout(changeTimer);
+        changeTimer = setTimeout(() => sendDataset().catch((error) => {
+          app.log("error", "Bridge", `实时同步失败：${error.message || error}`);
+        }), 350);
+      };
+
+      const watchSource = (sourceUserId) => {
+        if (!sourceUserId || typeof GM_addValueChangeListener !== "function") return;
+        for (const key of [
+          app.baseDatasetKey(sourceUserId),
+          app.probeResultsKey(sourceUserId),
+          app.reviewsKey(sourceUserId),
+          app.unfollowHistoryKey(sourceUserId),
+          app.queueKey(sourceUserId)
+        ]) {
+          if (watchedKeys.has(key)) continue;
+          watchedKeys.add(key);
+          GM_addValueChangeListener(key, scheduleDataset);
+        }
+      };
 
       const sendDataset = async () => {
         const dataset = await app.loadDataset();
         const queue = await app.loadUnfollowQueue(dataset.source_user_id);
+        watchSource(dataset.source_user_id);
         app.log("info", "Bridge", "向筛选页面发送数据集", {
           accounts: dataset.accounts.length,
           updated_at: dataset.updated_at,
@@ -1229,9 +1691,12 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
       };
 
       window.addEventListener("xfc:request-dataset", sendDataset);
+      if (typeof GM_addValueChangeListener === "function") {
+        GM_addValueChangeListener(app.constants.ACTIVE_SOURCE_KEY, scheduleDataset);
+      }
 
       window.addEventListener("xfc:save-reviews", async (event) => {
-        const reviews = Array.isArray(event.detail?.reviews) ? event.detail.reviews : [];
+        const requestedReviews = Array.isArray(event.detail?.reviews) ? event.detail.reviews : [];
         const dataset = await app.loadDataset();
         const requestedSource = String(event.detail?.source_user_id || "");
         if (
@@ -1249,34 +1714,27 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
           );
           return;
         }
-        const map = new Map(dataset.accounts.map((account) => [String(account.account_id), account]));
-        for (const review of reviews) {
-          const id = String(review.account_id || "");
-          const status = String(review.review_status || "");
-          if (!map.has(id) || !["", "keep", "remove", "done"].includes(status)) continue;
-          const account = map.get(id);
-          account.review_status =
-            account.unfollow_status === "success" || account.unfollowed_at
-              ? "done"
-              : status;
+        const knownIds = new Set(dataset.accounts.map((account) => String(account.account_id)));
+        const reviews = requestedReviews.filter((review) => knownIds.has(String(review.account_id || "")));
+        try {
+          await app.saveReviewChanges(dataset.source_user_id, reviews);
+          await app.prepareUnfollowRetries(dataset.source_user_id, reviews);
+          const result = await app.unfollow.queueAccounts();
+          app.log("info", "Bridge", "审核标记已写回", {
+            reviews: reviews.length,
+            ...result.stats
+          });
+          await sendDataset();
+          window.dispatchEvent(
+            new CustomEvent("xfc:reviews-saved", {
+              detail: { saved: reviews.length, ...result.stats }
+            })
+          );
+        } catch (error) {
+          const message = error.message || String(error);
+          app.log("error", "Bridge", message);
+          window.dispatchEvent(new CustomEvent("xfc:reviews-error", { detail: { message } }));
         }
-        await app.saveDataset(dataset);
-        const removeIds = Array.isArray(event.detail?.remove_ids)
-          ? event.detail.remove_ids
-          : dataset.accounts
-              .filter((account) => account.review_status === "remove")
-              .map((account) => account.account_id);
-        const result = await app.unfollow.queueAccounts(removeIds);
-        app.log("info", "Bridge", "审核标记已写回", {
-          reviews: reviews.length,
-          ...result.stats
-        });
-        window.dispatchEvent(
-          new CustomEvent("xfc:reviews-saved", {
-            detail: { saved: reviews.length, ...result.stats }
-          })
-        );
-        await sendDataset();
       });
 
       window.dispatchEvent(new CustomEvent("xfc:bridge-ready"));
@@ -1302,7 +1760,7 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
     #xfc-panel button.xfc-clear-danger{background:#fff0ee;color:#b42318;border-color:#f2a49d}
     #xfc-panel button.xfc-help-button{height:31px;padding:0 10px;font-size:12px}
     #xfc-panel button:disabled{cursor:wait;opacity:.55}
-    #xfc-panel label{display:flex;flex-direction:column;gap:4px;color:#536471;font-size:11px}#xfc-panel input{width:92px;padding:6px 8px;border:1px solid #cfd9de;border-radius:8px}#xfc-panel input[type=checkbox]{width:auto;padding:0}
+    #xfc-panel label{display:flex;flex-direction:column;gap:4px;color:#536471;font-size:11px}#xfc-panel input{width:92px;padding:6px 8px;border:1px solid #cfd9de;border-radius:8px}#xfc-panel input[type=checkbox]{width:auto;padding:0}#xfc-panel input:disabled{cursor:not-allowed;background:#eff3f4;color:#8b98a1;opacity:.72}
     #xfc-account-summary{margin-bottom:5px;padding:9px;border-radius:9px;background:#fff8dc;color:#655016;font-size:10px}
     #xfc-help{margin:12px 17px 0;padding:12px;border:1px solid #b9d8ee;border-radius:11px;background:#f1f8fd;color:#334b5b;font-size:11px}#xfc-help strong{display:block;margin-bottom:6px;color:#0f1419}#xfc-help ol{margin:0;padding-left:19px}#xfc-help li+li{margin-top:5px}#xfc-help p{margin-top:8px!important;color:#536471}
     .xfc-progress{margin-top:9px}.xfc-progress-track{height:7px;overflow:hidden;border-radius:999px;background:#eff3f4}.xfc-progress-bar{display:block;width:0;height:100%;border-radius:inherit;background:#1d9bf0;transition:width .2s ease}.xfc-progress.active.indeterminate .xfc-progress-bar{width:36%;animation:xfc-slide 1.15s ease-in-out infinite}.xfc-progress.complete .xfc-progress-bar{width:100%;background:#2e7d53}.xfc-progress.error .xfc-progress-bar{width:100%;background:#b42318}.xfc-progress.stopped .xfc-progress-bar{background:#b7791f}.xfc-progress small{display:block;margin-top:5px;color:#536471;font-size:10px}
@@ -1362,7 +1820,7 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
                 <p class="xfc-help-note">只保存请求结构和分页参数，不保存原始 cURL、Cookie 或 ct0。</p>
               </details>
               <textarea id="xfc-following-curl" placeholder="在这里粘贴完整的 Following cURL"></textarea>
-              <div class="row"><button class="primary" id="xfc-following-start">开始 / 继续导出</button></div>
+              <div class="row"><button class="primary" id="xfc-following-start">开始 / 继续导出</button><button id="xfc-following-stop">停止导出</button></div>
               <div class="xfc-progress" id="xfc-following-progress" hidden><div class="xfc-progress-track"><span class="xfc-progress-bar"></span></div><small>等待开始</small></div>
             </section>
             <section>
@@ -1374,7 +1832,7 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
                 <label><span>数量</span><span><input id="xfc-probe-all" type="checkbox">处理全部剩余</span></label>
                 <label><span>范围</span><span><input id="xfc-retry-failed" type="checkbox">重试全部异常</span></label>
               </div>
-              <div class="row"><button class="primary" id="xfc-probe-start">开始探测</button><button id="xfc-stop">安全停止</button></div>
+              <div class="row"><button class="primary" id="xfc-probe-start">开始探测</button><button id="xfc-probe-stop">停止探测</button></div>
               <div class="xfc-progress" id="xfc-probe-progress" hidden><div class="xfc-progress-track"><span class="xfc-progress-bar"></span></div><small>等待开始</small></div>
             </section>
             <section>
@@ -1395,7 +1853,7 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
                 <label>本批数量<input id="xfc-batch-size" type="number" min="1" max="50" value="10"></label>
                 <label>间隔（秒）<input id="xfc-unfollow-delay" type="number" min="1" value="5"></label>
               </div>
-              <div class="row"><button class="danger" id="xfc-unfollow-start">确认并执行一批</button></div>
+              <div class="row"><button class="danger" id="xfc-unfollow-start">确认并执行一批</button><button id="xfc-unfollow-stop">停止取消任务</button></div>
               <div class="xfc-progress" id="xfc-unfollow-progress" hidden><div class="xfc-progress-track"><span class="xfc-progress-bar"></span></div><small>等待开始</small></div>
             </section>
             <div id="xfc-log">[XFC] 等待操作。控制台可用 “XFC” 过滤完整日志。</div>
@@ -1443,15 +1901,18 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
           account.unfollow_status === "success" || account.unfollowed_at
         ).length;
         const failed = queue.filter((item) => item.status === "failed").length;
+        const needsReview = queue.filter((item) => ["executing", "needs_review"].includes(item.status)).length;
         el("xfc-queue-summary").textContent =
           `活动队列 ${pending.length} 人 · 历史成功 ${success}` +
-          (failed ? ` · 失败待重试 ${failed}` : "");
+          (failed ? ` · 失败待重试 ${failed}` : "") +
+          (needsReview ? ` · 待人工核验 ${needsReview}` : "");
         const list = el("xfc-queue-list");
         list.hidden = pending.length === 0;
         list.value = pending
           .map((item, index) =>
             `${index + 1}. @${item.screen_name || "未知"} · ${item.account_id}` +
-            (item.status === "failed" ? " · 上次失败" : "")
+            (item.status === "failed" ? " · 上次失败" :
+              ["executing", "needs_review"].includes(item.status) ? " · 结果待核验" : "")
           )
           .join("\n");
         if (writeLog) {
@@ -1509,16 +1970,11 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
                   : "stopped",
             message:
               savedStatus === "running"
-                ? `上次任务因页面刷新中断 · 已探测 ${probed}/${total}`
+                ? `${app.profileProbe.running ? "正在探测" : "上次任务中断，可安全继续"} · 已探测 ${probed}/${total}`
                 : `已探测 ${probed}/${total} · ${savedStatus === "error" ? "上次任务异常停止" : probed >= total ? "全部完成" : "等待继续"}`,
             current: probed,
             total
           });
-          if (savedStatus === "running") {
-            dataset.profile_probe.status = "paused";
-            dataset.profile_probe.updated_at = app.nowIso();
-            await app.saveDataset(dataset);
-          }
         } else {
           el("xfc-probe-progress").hidden = true;
         }
@@ -1567,6 +2023,10 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
         else this.close();
       };
       el("xfc-close").onclick = () => this.close();
+      el("xfc-following-stop").onclick = () => {
+        app.following.stop();
+        log("已请求停止关注列表导出，将在当前请求结束后保存进度。", "warn", "Following");
+      };
       el("xfc-following-start").onclick = async () => {
         setBusy("xfc-following-start", true, "正在导出…", "开始 / 继续导出");
         try {
@@ -1614,14 +2074,24 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
           await restoreState();
         }
       };
-      el("xfc-probe-all").onchange = () => {
-        el("xfc-probe-limit").disabled = el("xfc-probe-all").checked;
+      const syncProbeLimitLock = () => {
+        const limit = el("xfc-probe-limit");
+        const locked = el("xfc-probe-all").checked;
+        limit.disabled = locked;
+        limit.readOnly = locked;
+        limit.tabIndex = locked ? -1 : 0;
+        limit.setAttribute("aria-disabled", String(locked));
+        limit.title = locked ? "已选择处理全部剩余，本次最多不可修改" : "";
       };
-      el("xfc-stop").onclick = () => {
-        app.following.stop();
+      el("xfc-probe-all").addEventListener("change", syncProbeLimitLock);
+      syncProbeLimitLock();
+      el("xfc-probe-stop").onclick = () => {
         app.profileProbe.stop();
+        log("已请求停止匿名探测，将在当前请求结束并保存缓冲结果后暂停。", "warn", "ProfileProbe");
+      };
+      el("xfc-unfollow-stop").onclick = () => {
         app.unfollow.stop();
-        log("已请求安全停止，将在当前请求结束后暂停。", "warn");
+        log("已请求停止取消任务，将在当前请求结束后暂停。", "warn", "Unfollow");
       };
       el("xfc-export").onclick = async () => {
         const dataset = await app.loadDataset();
@@ -1630,6 +2100,11 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
       };
       el("xfc-clear-data").onclick = async () => {
         const sourceUserId = await app.getActiveSourceId();
+        const activeLeases = await app.activeTaskLeases(sourceUserId);
+        if (app.following.running || app.profileProbe.running || app.unfollow.running || activeLeases.length) {
+          log("有任务正在运行，请先停止任务并等待当前请求结束后再清空数据。", "error", "Storage");
+          return;
+        }
         if (!confirm(
           `确认清空当前账号 ${sourceUserId || "未知"} 的关注列表、探测结果和取消队列？\n\n其他账号的数据不会被清空。`
         )) return;

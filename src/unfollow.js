@@ -80,7 +80,7 @@
       return template;
     },
 
-    async queueAccounts(accounts) {
+    async queueAccounts(accounts = null) {
       const dataset = await app.loadDataset();
       const sourceUserId = String(dataset.source_user_id || "");
       if (!sourceUserId) throw new Error("没有活动账号，无法建立取消队列。");
@@ -90,7 +90,10 @@
       const queue = [];
       let ignoredProcessed = 0;
       let ignoredUnknown = 0;
-      for (const value of accounts) {
+      const selected = Array.isArray(accounts)
+        ? accounts
+        : dataset.accounts.filter((account) => account.review_status === "remove");
+      for (const value of selected) {
         const id = String(value.account_id || value || "");
         if (!/^\d+$/.test(id) || !known.has(id)) {
           ignoredUnknown += 1;
@@ -101,24 +104,23 @@
           account.unfollow_status === "success" ||
           Boolean(account.unfollowed_at);
         if (processed) {
-          account.review_status = "done";
           ignoredProcessed += 1;
           continue;
         }
-        account.review_status = "remove";
         const previousStatus = previous.get(id)?.status;
         queue.push({
           account_id: id,
           screen_name: account.screen_name,
-          status: previousStatus === "failed" ? "failed" : "pending"
+          status: ["failed", "executing", "needs_review"].includes(previousStatus)
+            ? previousStatus
+            : "pending"
         });
       }
-      await app.saveDataset(dataset);
       await app.saveUnfollowQueue(queue, sourceUserId);
       return {
         queue,
         stats: {
-          selected: accounts.length,
+          selected: selected.length,
           queued: queue.length,
           failed: queue.filter((item) => item.status === "failed").length,
           ignored_processed: ignoredProcessed,
@@ -157,30 +159,80 @@
           source_user_id: sourceUserId
         });
       }
-      let queue = await app.loadUnfollowQueue(sourceUserId);
+      const lease = await app.acquireTaskLease(sourceUserId, "unfollow", 90000);
       const batchSize = Math.min(50, Math.max(1, Number(options.batchSize || 10)));
       const intervalMs = Math.max(1000, Number(options.intervalMs || 5000));
-      const targets = queue.filter((item) => item.status !== "success").slice(0, batchSize);
-      if (!targets.length) throw new Error("没有待取消账号。");
-      const map = new Map(dataset.accounts.map((account) => [String(account.account_id), account]));
+      let queue;
+      let targets;
+      try {
+        queue = await app.loadUnfollowQueue(sourceUserId);
+        const interrupted = queue.filter((item) => item.status === "executing");
+        if (interrupted.length) {
+          await app.saveUnfollowResults(sourceUserId, interrupted.map((item) => ({
+            account_id: item.account_id,
+            unfollow_status: "needs_review",
+            unfollow_error: "上次任务在请求完成前中断，请核验当前关注状态。"
+          })));
+          queue = await app.loadUnfollowQueue(sourceUserId);
+          await app.saveUnfollowQueue(queue, sourceUserId);
+        }
+        targets = queue.filter((item) =>
+          !["success", "executing", "needs_review"].includes(item.status)
+        ).slice(0, batchSize);
+        if (!targets.length) {
+          const needsReview = queue.filter((item) => item.status === "needs_review").length;
+          throw new Error(needsReview
+            ? `有 ${needsReview} 个账号的上次执行结果待人工核验。确认仍在关注后，请在筛选页重新标记“待取消”再发送。`
+            : "没有待取消账号。");
+        }
+      } catch (error) {
+        await app.releaseTaskLease(lease);
+        throw error;
+      }
       this.running = true;
       this.stopRequested = false;
       let batchSucceeded = 0;
-      onProgress({
-        phase: "start",
-        message: `取消关注任务准备完成，本批 ${targets.length} 人`,
-        current: 0,
-        total: targets.length
-      });
-      app.log("info", "Unfollow", "任务开始", {
-        batch_size: targets.length,
-        interval_ms: intervalMs
-      });
-
       try {
+        onProgress({
+          phase: "start",
+          message: `取消关注任务准备完成，本批 ${targets.length} 人`,
+          current: 0,
+          total: targets.length
+        });
+        app.log("info", "Unfollow", "任务开始", {
+          batch_size: targets.length,
+          interval_ms: intervalMs
+        });
         for (let index = 0; index < targets.length; index += 1) {
           if (this.stopRequested) break;
+          if (!await app.heartbeatTaskLease(lease)) {
+            throw new Error("取消关注任务租约已失效，任务停止。");
+          }
           const target = targets[index];
+          const latestDataset = await app.loadDataset(sourceUserId);
+          const latestAccount = latestDataset.accounts.find((account) =>
+            String(account.account_id) === String(target.account_id)
+          );
+          if (!latestAccount || latestAccount.review_status !== "remove" ||
+              latestAccount.unfollow_status === "success" || latestAccount.unfollowed_at) {
+            queue = await app.loadUnfollowQueue(sourceUserId);
+            await app.saveUnfollowQueue(queue, sourceUserId);
+            continue;
+          }
+          const previousHistory = (await app.loadUnfollowHistory(sourceUserId))[target.account_id] || {};
+          const attemptCount = Number(previousHistory.unfollow_attempt_count || 0) + 1;
+          const startedAt = app.nowIso();
+          await app.saveUnfollowResults(sourceUserId, [{
+            account_id: target.account_id,
+            unfollow_status: "executing",
+            unfollow_started_at: startedAt,
+            unfollow_attempt_count: attemptCount,
+            unfollow_error: ""
+          }]);
+          queue = (await app.loadUnfollowQueue(sourceUserId)).map((item) =>
+            item.account_id === target.account_id ? { ...item, status: "executing" } : item
+          );
+          await app.saveUnfollowQueue(queue, sourceUserId);
           onProgress({
             phase: "request",
             message: `正在处理 ${index + 1}/${targets.length}：@${target.screen_name || target.account_id}`,
@@ -199,6 +251,7 @@
           const body = new URLSearchParams({ ...template.params, user_id: target.account_id });
           let status = "failed";
           let httpStatus = 0;
+          let requestError = "";
           try {
             const response = await fetch(template.url, {
               method: "POST",
@@ -208,32 +261,41 @@
             });
             httpStatus = response.status;
             if (response.status === 429) {
-              throw new Error("取消关注遇到 429，已保存进度并停止。");
+              status = "failed";
+              requestError = "HTTP 429";
+            } else {
+              status = response.ok ? "success" : "failed";
+              if (!response.ok) requestError = `HTTP ${response.status}`;
             }
-            status = response.ok ? "success" : "failed";
           } catch (error) {
-            if (String(error.message || error).includes("429")) throw error;
+            status = "needs_review";
+            requestError = error.message || String(error);
           }
+          await app.saveUnfollowResults(sourceUserId, [{
+            account_id: target.account_id,
+            unfollow_status: status,
+            unfollow_http_status: httpStatus || "",
+            unfollowed_at: status === "success" ? app.nowIso() : "",
+            unfollow_error: requestError,
+            unfollow_started_at: startedAt,
+            unfollow_attempt_count: attemptCount
+          }]);
           const latestQueue = await app.loadUnfollowQueue(sourceUserId);
           if (status === "success") {
             queue = latestQueue.filter((item) => item.account_id !== target.account_id);
           } else {
             queue = latestQueue;
             const queueItem = queue.find((item) => item.account_id === target.account_id);
-            if (queueItem) queueItem.status = status;
-          }
-          const account = map.get(target.account_id);
-          if (account) {
-            account.unfollow_status = status;
-            account.unfollow_http_status = httpStatus || "";
-            if (status === "success") {
-              batchSucceeded += 1;
-              account.unfollowed_at = app.nowIso();
-              account.review_status = "done";
+            if (queueItem) {
+              queueItem.status = status;
+              queueItem.last_error = requestError;
             }
           }
+          if (status === "success") batchSucceeded += 1;
           await app.saveUnfollowQueue(queue, sourceUserId);
-          await app.saveDataset(dataset);
+          if (!await app.heartbeatTaskLease(lease)) {
+            throw new Error("取消关注任务租约已失效，任务停止。");
+          }
           onProgress({
             phase: index + 1 === targets.length ? "complete" : "progress",
             message: `取消关注 ${index + 1}/${targets.length}：@${target.screen_name || target.account_id} ${status}`,
@@ -245,6 +307,9 @@
             current: index + 1,
             total: targets.length
           });
+          if (httpStatus === 429) {
+            throw new Error("取消关注遇到 429，已保存进度并停止。");
+          }
           if (index + 1 < targets.length) await app.sleep(intervalMs);
         }
         if (this.stopRequested) {
@@ -264,6 +329,7 @@
         app.log("error", "Unfollow", error.message || String(error));
         throw error;
       } finally {
+        await app.releaseTaskLease(lease);
         this.running = false;
       }
     },

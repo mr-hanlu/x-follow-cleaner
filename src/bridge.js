@@ -2,10 +2,34 @@
   app.bridge = {
     install() {
       if (location.hostname === "x.com") return;
+      const watchedKeys = new Set();
+      let changeTimer = null;
+      const scheduleDataset = () => {
+        clearTimeout(changeTimer);
+        changeTimer = setTimeout(() => sendDataset().catch((error) => {
+          app.log("error", "Bridge", `实时同步失败：${error.message || error}`);
+        }), 350);
+      };
+
+      const watchSource = (sourceUserId) => {
+        if (!sourceUserId || typeof GM_addValueChangeListener !== "function") return;
+        for (const key of [
+          app.baseDatasetKey(sourceUserId),
+          app.probeResultsKey(sourceUserId),
+          app.reviewsKey(sourceUserId),
+          app.unfollowHistoryKey(sourceUserId),
+          app.queueKey(sourceUserId)
+        ]) {
+          if (watchedKeys.has(key)) continue;
+          watchedKeys.add(key);
+          GM_addValueChangeListener(key, scheduleDataset);
+        }
+      };
 
       const sendDataset = async () => {
         const dataset = await app.loadDataset();
         const queue = await app.loadUnfollowQueue(dataset.source_user_id);
+        watchSource(dataset.source_user_id);
         app.log("info", "Bridge", "向筛选页面发送数据集", {
           accounts: dataset.accounts.length,
           updated_at: dataset.updated_at,
@@ -25,9 +49,12 @@
       };
 
       window.addEventListener("xfc:request-dataset", sendDataset);
+      if (typeof GM_addValueChangeListener === "function") {
+        GM_addValueChangeListener(app.constants.ACTIVE_SOURCE_KEY, scheduleDataset);
+      }
 
       window.addEventListener("xfc:save-reviews", async (event) => {
-        const reviews = Array.isArray(event.detail?.reviews) ? event.detail.reviews : [];
+        const requestedReviews = Array.isArray(event.detail?.reviews) ? event.detail.reviews : [];
         const dataset = await app.loadDataset();
         const requestedSource = String(event.detail?.source_user_id || "");
         if (
@@ -45,34 +72,27 @@
           );
           return;
         }
-        const map = new Map(dataset.accounts.map((account) => [String(account.account_id), account]));
-        for (const review of reviews) {
-          const id = String(review.account_id || "");
-          const status = String(review.review_status || "");
-          if (!map.has(id) || !["", "keep", "remove", "done"].includes(status)) continue;
-          const account = map.get(id);
-          account.review_status =
-            account.unfollow_status === "success" || account.unfollowed_at
-              ? "done"
-              : status;
+        const knownIds = new Set(dataset.accounts.map((account) => String(account.account_id)));
+        const reviews = requestedReviews.filter((review) => knownIds.has(String(review.account_id || "")));
+        try {
+          await app.saveReviewChanges(dataset.source_user_id, reviews);
+          await app.prepareUnfollowRetries(dataset.source_user_id, reviews);
+          const result = await app.unfollow.queueAccounts();
+          app.log("info", "Bridge", "审核标记已写回", {
+            reviews: reviews.length,
+            ...result.stats
+          });
+          await sendDataset();
+          window.dispatchEvent(
+            new CustomEvent("xfc:reviews-saved", {
+              detail: { saved: reviews.length, ...result.stats }
+            })
+          );
+        } catch (error) {
+          const message = error.message || String(error);
+          app.log("error", "Bridge", message);
+          window.dispatchEvent(new CustomEvent("xfc:reviews-error", { detail: { message } }));
         }
-        await app.saveDataset(dataset);
-        const removeIds = Array.isArray(event.detail?.remove_ids)
-          ? event.detail.remove_ids
-          : dataset.accounts
-              .filter((account) => account.review_status === "remove")
-              .map((account) => account.account_id);
-        const result = await app.unfollow.queueAccounts(removeIds);
-        app.log("info", "Bridge", "审核标记已写回", {
-          reviews: reviews.length,
-          ...result.stats
-        });
-        window.dispatchEvent(
-          new CustomEvent("xfc:reviews-saved", {
-            detail: { saved: reviews.length, ...result.stats }
-          })
-        );
-        await sendDataset();
       });
 
       window.dispatchEvent(new CustomEvent("xfc:bridge-ready"));

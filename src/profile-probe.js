@@ -80,6 +80,8 @@
       if (this.running) throw new Error("匿名主页探测已经在运行。");
       let dataset = await app.loadDataset();
       if (!dataset.accounts.length) throw new Error("请先导出关注列表。");
+      const sourceUserId = String(dataset.source_user_id || "");
+      const lease = await app.acquireTaskLease(sourceUserId, "profile-probe", 90000);
       const intervalMs = Math.max(500, Number(options.intervalMs || 3000));
       const limit = Math.max(0, Number(options.limit || 0));
       const concurrency = Math.min(8, Math.max(1, Number(options.concurrency || 1)));
@@ -102,6 +104,8 @@
       let nextTargetIndex = 0;
       let fatalError = null;
       let saveChain = Promise.resolve();
+      let pendingResults = [];
+      let flushTimer = null;
       dataset.profile_probe = {
         status: targets.length ? "running" : "complete",
         completed: overallCompleted(),
@@ -113,7 +117,13 @@
         started_at: app.nowIso(),
         updated_at: app.nowIso()
       };
-      await app.saveDataset(dataset);
+      try {
+        await app.saveProbeTask(sourceUserId, dataset.profile_probe);
+      } catch (error) {
+        this.running = false;
+        await app.releaseTaskLease(lease);
+        throw error;
+      }
       onProgress({
         phase: targets.length ? "start" : "complete",
         message: targets.length
@@ -131,37 +141,84 @@
         retry_failed: retryFailed
       });
 
-      const commitResult = (target, result) => {
+      const flushPending = (force = false) => {
+        if (!pendingResults.length) return saveChain;
+        if (!force && pendingResults.length < 5) return saveChain;
+        if (flushTimer) clearTimeout(flushTimer);
+        flushTimer = null;
+        const batch = pendingResults;
+        pendingResults = [];
+        const taskSnapshot = { ...dataset.profile_probe, updated_at: app.nowIso() };
         saveChain = saveChain.then(async () => {
-          app.upsertAccounts(dataset, [result]);
-          const currentOverall = overallCompleted();
-          dataset.profile_probe = {
-            ...dataset.profile_probe,
-            status: "running",
-            completed: currentOverall,
-            total: overallTotal,
-            batch_completed: completed + 1,
-            current_screen_name: target.screen_name,
-            updated_at: app.nowIso()
-          };
-          await app.saveDataset(dataset);
-          completed += 1;
-          onProgress({
-            phase: "progress",
-            message: `已探测 ${currentOverall}/${overallTotal} · 本轮 ${completed}/${targets.length}：@${target.screen_name} ${result.data_status}`,
-            current: currentOverall,
-            total: overallTotal,
-            batch_current: completed,
-            batch_total: targets.length
-          });
-          app.log(
-            result.data_status === "ok" ? "info" : "warn",
-            "ProfileProbe",
-            `@${target.screen_name} ${result.data_status}`,
-            { current: completed, total: targets.length, concurrency }
-          );
+          await app.saveProbeResults(sourceUserId, batch, taskSnapshot);
+          if (!await app.heartbeatTaskLease(lease)) throw new Error("匿名探测任务租约已失效，任务停止。");
         });
         return saveChain;
+      };
+
+      const scheduleFlush = () => {
+        if (flushTimer) return;
+        flushTimer = setTimeout(() => {
+          flushTimer = null;
+          flushPending(true).catch((error) => {
+            fatalError ||= error;
+          });
+        }, 2000);
+      };
+
+      const flushForLifecycle = (event) => {
+        if (event?.type === "visibilitychange" && document.visibilityState !== "hidden") return;
+        flushPending(true).catch((error) => app.log(
+          "error", "ProfileProbe", `后台切换时保存失败：${error.message || error}`
+        ));
+      };
+      if (typeof document !== "undefined" && document.addEventListener) {
+        document.addEventListener("visibilitychange", flushForLifecycle);
+        document.addEventListener("freeze", flushForLifecycle);
+        window.addEventListener("pagehide", flushForLifecycle);
+      }
+
+      const commitResult = async (target, result) => {
+        const account = dataset.accounts.find((item) => String(item.account_id) === String(target.account_id));
+        if (account) {
+          Object.assign(account, {
+            last_post_at: result.last_post_at,
+            inactive_days: result.inactive_days,
+            last_post_id: result.last_post_id,
+            last_post_url: result.last_post_url,
+            data_status: result.data_status,
+            fetched_at: result.fetched_at
+          });
+        }
+        completed += 1;
+        const currentOverall = overallCompleted();
+        dataset.profile_probe = {
+          ...dataset.profile_probe,
+          status: "running",
+          completed: currentOverall,
+          total: overallTotal,
+          batch_completed: completed,
+          current_screen_name: target.screen_name,
+          updated_at: app.nowIso()
+        };
+        pendingResults.push(result);
+        scheduleFlush();
+        if (pendingResults.length >= 5) await flushPending(true);
+        else if (!await app.heartbeatTaskLease(lease)) throw new Error("匿名探测任务租约已失效，任务停止。");
+        onProgress({
+          phase: "progress",
+          message: `已探测 ${currentOverall}/${overallTotal} · 本轮 ${completed}/${targets.length}：@${target.screen_name} ${result.data_status}`,
+          current: currentOverall,
+          total: overallTotal,
+          batch_current: completed,
+          batch_total: targets.length
+        });
+        app.log(
+          result.data_status === "ok" ? "info" : "warn",
+          "ProfileProbe",
+          `@${target.screen_name} ${result.data_status}`,
+          { current: completed, total: targets.length, concurrency }
+        );
       };
 
       const worker = async (workerIndex) => {
@@ -171,6 +228,10 @@
           );
         }
         while (!this.stopRequested && !fatalError) {
+          if (!await app.heartbeatTaskLease(lease)) {
+            fatalError = new Error("匿名探测任务租约已失效，任务停止。");
+            return;
+          }
           const targetIndex = nextTargetIndex;
           nextTargetIndex += 1;
           if (targetIndex >= targets.length) return;
@@ -240,6 +301,7 @@
         await Promise.all(
           Array.from({ length: workerCount }, (_, index) => worker(index))
         );
+        await flushPending(true);
         await saveChain;
         if (fatalError) throw fatalError;
         if (this.stopRequested) {
@@ -250,7 +312,7 @@
             batch_completed: completed,
             updated_at: app.nowIso()
           };
-          await app.saveDataset(dataset);
+          await app.saveProbeTask(sourceUserId, dataset.profile_probe);
           onProgress({
             phase: "stopped",
             message: `已暂停 · 整体已探测 ${overallCompleted()}/${overallTotal} · 本轮完成 ${completed}/${targets.length}`,
@@ -273,7 +335,7 @@
             batch_completed: completed,
             updated_at: app.nowIso()
           };
-          await app.saveDataset(dataset);
+          await app.saveProbeTask(sourceUserId, dataset.profile_probe);
           onProgress({
             phase: allAttempted ? "complete" : "stopped",
             message: allAttempted
@@ -287,6 +349,8 @@
         }
         return dataset;
       } catch (error) {
+        await flushPending(true);
+        await saveChain;
         dataset.profile_probe = {
           ...dataset.profile_probe,
           status: "error",
@@ -295,13 +359,20 @@
           error: error.message || String(error),
           updated_at: app.nowIso()
         };
-        await app.saveDataset(dataset);
+        await app.saveProbeTask(sourceUserId, dataset.profile_probe);
         app.log("error", "ProfileProbe", error.message || String(error), {
           completed,
           total: targets.length
         });
         throw error;
       } finally {
+        if (flushTimer) clearTimeout(flushTimer);
+        if (typeof document !== "undefined" && document.removeEventListener) {
+          document.removeEventListener("visibilitychange", flushForLifecycle);
+          document.removeEventListener("freeze", flushForLifecycle);
+          window.removeEventListener("pagehide", flushForLifecycle);
+        }
+        await app.releaseTaskLease(lease);
         this.running = false;
       }
     },

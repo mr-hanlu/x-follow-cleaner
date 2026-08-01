@@ -89,7 +89,11 @@
         <div class="empty" id="empty"><strong>尚未载入账号数据</strong><span>从油猴同步或导入 CSV 后即可开始。</span></div>
         <footer class="pagination" hidden>
           <span id="page-label">第 1 / 1 页</span>
-          <div><button id="previous-page">上一页</button><button id="next-page">下一页</button></div>
+          <div class="pagination-controls">
+            <button id="previous-page">上一页</button>
+            <label class="page-jump">跳转到 <input id="page-jump" type="number" min="1" value="1" inputmode="numeric" aria-label="跳转页码" /> 页</label>
+            <button id="next-page">下一页</button>
+          </div>
         </footer>
       </section>
     </main>

@@ -1,6 +1,6 @@
 # X 关注清理助手技术说明
 
-本文档描述 `0.7.1` 的当前实现、数据流、模块边界和后续多语言改造方案。面向后续维护者和接手项目的 AI；普通用户请先阅读 [README.md](./README.md) 上半部分。
+本文档描述 `0.8.0` 的当前实现、数据流、模块边界和后续多语言改造方案。面向后续维护者和接手项目的 AI；普通用户请先阅读 [README.md](./README.md) 上半部分。
 
 ## 1. 项目目标与边界
 
@@ -83,13 +83,14 @@ web/download/          网页提供安装的构建产物
 - 根据状态 ID 的 Snowflake 时间取响应中最新的可见状态。
 - 原始响应解析后丢弃，只保存结构化结果。
 - 支持本次上限、请求间隔、1–8 并发、全选和失败重试。
-- 每个结果写入后保存，刷新页面可以恢复整体进度。
+- 探测结果只更新探测字段；累计 5 条或等待 2 秒后批量保存，暂停、完成、异常和页面隐藏时强制刷新缓冲区。
+- 同一账号的探测任务使用带过期时间的任务租约，避免多个 X 标签页重复执行。
 
 `last_post_at` 的准确含义是“匿名公开主页响应中可解析到的最新状态时间”。它不是完整发推历史，可能不包含登录后内容、受保护内容或 X 未在匿名 HTML 中下发的内容。
 
 ### 4.3 静态筛选页面
 
-- 页面打开或刷新后尝试自动从油猴脚本同步一次。
+- 页面打开或刷新后自动从油猴脚本同步，并监听分层存储变化实时刷新。
 - 也支持直接导入 CSV。
 - 支持按名称、用户名、ID、活跃天数上下限、粉丝数上下限、探测状态、蓝标和审核状态筛选。
 - 支持排序、快速筛选、分页、批量保留、批量待取消、清空和撤销。
@@ -106,7 +107,7 @@ web/download/          网页提供安装的构建产物
 | `xfc:bridge-ready` | 油猴 → 网页 | 通知桥接已经就绪 |
 | `xfc:request-dataset` | 网页 → 油猴 | 请求当前活动账号的数据 |
 | `xfc:dataset` | 油猴 → 网页 | 返回账号、队列和来源账号 ID |
-| `xfc:save-reviews` | 网页 → 油猴 | 写回审核标记与待取消 ID |
+| `xfc:save-reviews` | 网页 → 油猴 | 只写回用户实际修改的审核标记 |
 | `xfc:reviews-saved` | 油猴 → 网页 | 通知保存成功并返回统计 |
 | `xfc:reviews-error` | 油猴 → 网页 | 返回账号切换等写入错误 |
 
@@ -114,22 +115,23 @@ web/download/          网页提供安装的构建产物
 
 ### 4.5 待取消队列与执行
 
-- 网页发送的是当前完整待取消选择，不是只追加新选择。
+- 网页只发送变化的审核标记；活动队列由最新 `remove` 标记减去成功历史动态计算。
 - 空选择会清空尚未执行的活动队列。
 - 已成功取消的账号保留在数据集中，标为 `done`，但从活动队列移除。
 - 再次发送队列时会过滤 `unfollow_status=success` 或已有 `unfollowed_at` 的账号。
 - 执行前比较当前登录账号 `twid` 与数据集 `source_user_id`，避免串号。
 - 默认自动生成 `friendships/destroy.json` 请求模板；也保留手动 cURL 模板能力。
-- 支持设置本批数量和请求间隔，单个结果执行后立即保存。
+- 支持设置本批数量和请求间隔；执行前持久化 `executing`，成功历史保存后才从队列移除。
+- 上次任务若在请求期间中断，会进入 `needs_review`，不会自动重复执行。
 - 遇到 HTTP 429 时停止，已完成进度不会丢失。
 
 ## 5. 数据模型
 
-数据集顶层结构：
+对界面和 CSV 暴露的合并数据结构：
 
 ```js
 {
-  schema_version: "x-follow-cleaner-v1",
+  schema_version: "x-follow-cleaner-v3",
   source_user_id: "当前账号数字 ID",
   updated_at: "ISO 时间",
   completed_following: false,
@@ -162,11 +164,15 @@ CSV 列名属于稳定交换协议。后续增加语言时不能翻译这些列�
 
 ## 6. 本地存储与账号隔离
 
-油猴侧主要键：
+油猴侧按职责分层存储，读取时按 `account_id` 合并：
 
 ```text
 xfc:active-source:v1
-xfc:dataset:v2:{source_user_id}
+xfc:accounts:v3:{source_user_id}
+xfc:probe-results:v1:{source_user_id}
+xfc:reviews:v1:{source_user_id}
+xfc:unfollow-history:v1:{source_user_id}
+xfc:task-lease:v1:{source_user_id}:{task_type}
 xfc:unfollow-template:v2:{source_user_id}
 xfc:unfollow-queue:v2:{source_user_id}
 xfc:settings:v1
@@ -178,7 +184,7 @@ xfc:settings:v1
 xfc-dashboard-review-state-v3:{source_user_id}
 ```
 
-旧版未隔离数据在读取时迁移。清空按钮只删除当前活动账号的数据、请求模板和队列，不跨账号删除。
+旧版 `xfc:dataset:v2:*` 和未隔离数据在首次读取时自动拆分迁移；旧数据保留为回退备份。清空按钮只删除当前活动账号的分层数据、任务租约、请求模板和队列，不跨账号删除。
 
 ## 7. 状态与错误口径
 

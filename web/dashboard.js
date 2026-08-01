@@ -22,6 +22,7 @@ const state = {
   page: 1,
   pageSize: 50,
   undo: null,
+  pendingReviews: new Map(),
   source: "未载入",
   bridge: false
 };
@@ -38,7 +39,8 @@ const elements = {
   dataStatus: $("#data-status"), blueStatus: $("#blue-status"),
   reviewStatus: $("#review-status"), sort: $("#sort-key"), overwrite: $("#overwrite"),
   undo: $("#bulk-undo"), pagination: $(".pagination"), pageLabel: $("#page-label"),
-  previous: $("#previous-page"), next: $("#next-page"), pageSize: $("#page-size")
+  previous: $("#previous-page"), next: $("#next-page"), pageSize: $("#page-size"),
+  pageJump: $("#page-jump")
 };
 
 const helpDialog = $("#help-dialog");
@@ -275,6 +277,8 @@ function render() {
   elements.empty.hidden = rows.length > 0;
   elements.pagination.hidden = !filtered.length;
   elements.pageLabel.textContent = `第 ${state.page} / ${pages} 页 · 本页 ${rows.length} 个`;
+  elements.pageJump.max = String(pages);
+  elements.pageJump.value = String(state.page);
   elements.previous.disabled = state.page <= 1; elements.next.disabled = state.page >= pages;
   elements.save.disabled = !state.accounts.length;
   elements.send.disabled = !state.bridge || !state.accounts.length;
@@ -288,16 +292,18 @@ function render() {
     elements.empty.lastElementChild.textContent = state.accounts.length ? "请放宽或重置筛选条件。" : "从油猴同步或导入 CSV 后即可开始。";
   }
 }
-function loadAccounts(accounts, source, sourceUserId = "") {
+function loadAccounts(accounts, source, sourceUserId = "", { preservePage = false } = {}) {
   const normalizedSource = String(sourceUserId || accounts[0]?.source_user_id || "");
   if (normalizedSource !== state.sourceUserId) {
     state.sourceUserId = normalizedSource;
+    state.pendingReviews.clear();
     const reviewState = loadReviewState(normalizedSource);
     state.reviews = reviewState.reviews;
     state.dirty = reviewState.dirty;
   }
   state.accounts = normalize(accounts);
-  saveReviews(); state.source = source; state.page = 1;
+  saveReviews(); state.source = source;
+  if (!preservePage) state.page = 1;
   elements.notice.textContent =
     `已载入 ${state.accounts.length.toLocaleString("zh-CN")} 个账号，来源：${source}` +
     (state.sourceUserId ? `，所属账号：${state.sourceUserId}` : "") +
@@ -347,6 +353,7 @@ window.addEventListener("xfc:bridge-ready", () => {
   if (!receivedDataset) requestDataset({ automatic: true, force: true });
 });
 window.addEventListener("xfc:dataset", (event) => {
+  const preservePage = receivedDataset && String(event.detail?.source_user_id || "") === state.sourceUserId;
   clearTimeout(syncTimer);
   syncPending = false;
   receivedDataset = true;
@@ -363,24 +370,33 @@ window.addEventListener("xfc:dataset", (event) => {
   loadAccounts(
     event.detail?.accounts || [],
     "油猴本地数据",
-    event.detail?.source_user_id || ""
+    event.detail?.source_user_id || "",
+    { preservePage }
   );
 });
 window.addEventListener("xfc:reviews-saved", (event) => {
   clearTimeout(queueTimer);
-  state.dirty.clear();
-  state.reviews = {};
+  for (const [id, sentStatus] of state.pendingReviews) {
+    if ((state.reviews[id] || "") !== sentStatus) continue;
+    state.dirty.delete(id);
+    delete state.reviews[id];
+  }
+  state.pendingReviews.clear();
   saveReviews();
   elements.send.disabled = false;
-  elements.send.textContent = "发送待取消队列";
+  elements.send.textContent = state.dirty.size
+    ? `发送待取消队列 · ${state.dirty.size} 项未同步`
+    : "发送待取消队列";
   elements.notice.textContent =
     `已写回 ${event.detail?.saved || 0} 个标记；活动队列 ${event.detail?.queued || 0} 人` +
     `，已处理并忽略 ${event.detail?.ignored_processed || 0} 人` +
     `，从旧队列移除 ${event.detail?.removed_from_previous || 0} 人。`;
   dashboardLog("info", "审核标记已写回油猴。", event.detail);
+  render();
 });
 window.addEventListener("xfc:reviews-error", (event) => {
   clearTimeout(queueTimer);
+  state.pendingReviews.clear();
   elements.send.disabled = false;
   elements.send.textContent = "发送待取消队列";
   elements.notice.textContent = event.detail?.message || "写回失败，请重新同步后重试。";
@@ -396,7 +412,9 @@ elements.file.onchange = async (event) => {
 elements.save.onclick = () => downloadCSV(`x_following_reviewed_${new Date().toISOString().slice(0,10).replaceAll("-","")}.csv`, state.accounts);
 elements.send.onclick = () => {
   if (!state.bridge) { elements.notice.textContent = "没有连接油猴脚本，请先安装对应域名版本并刷新页面。"; return; }
-  const reviews = state.accounts.map((account) => ({ account_id: account.account_id, review_status: reviewOf(account) }));
+  const reviews = state.accounts
+    .filter((account) => state.dirty.has(account.account_id))
+    .map((account) => ({ account_id: account.account_id, review_status: reviewOf(account) }));
   const removeIds = state.accounts
     .filter((account) => reviewOf(account) === "remove")
     .map((account) => account.account_id);
@@ -406,14 +424,16 @@ elements.send.onclick = () => {
     !confirm(`当前没有选择待取消账号。继续将清空油猴中的 ${state.remoteQueue.length} 个未处理队列项，确定吗？`)
   ) return;
   clearTimeout(queueTimer);
+  state.pendingReviews = new Map(reviews.map((review) => [review.account_id, review.review_status]));
   elements.send.disabled = true;
   elements.send.textContent = "发送中…";
   elements.notice.textContent = "正在把审核标记写回油猴本地队列…";
   dashboardLog("info", "发送审核标记。", { reviews: reviews.length });
   window.dispatchEvent(new CustomEvent("xfc:save-reviews", {
-    detail: { reviews, remove_ids: removeIds, source_user_id: state.sourceUserId }
+    detail: { reviews, source_user_id: state.sourceUserId }
   }));
   queueTimer = setTimeout(() => {
+    state.pendingReviews.clear();
     elements.send.disabled = false;
     elements.send.textContent = "发送待取消队列";
     elements.notice.textContent = "发送超时：油猴数据桥没有响应，请刷新页面后重试。";
@@ -481,6 +501,23 @@ $("#quick-remove").onclick = () => {
 elements.pageSize.onchange = () => { state.pageSize = Number(elements.pageSize.value); state.page = 1; render(); };
 elements.previous.onclick = () => { state.page -= 1; render(); $(".results").scrollIntoView({ behavior: "smooth" }); };
 elements.next.onclick = () => { state.page += 1; render(); $(".results").scrollIntoView({ behavior: "smooth" }); };
+const jumpToPage = () => {
+  const target = Number.parseInt(elements.pageJump.value, 10);
+  if (!Number.isFinite(target)) {
+    elements.pageJump.value = String(state.page);
+    return;
+  }
+  const pages = Number(elements.pageJump.max) || 1;
+  state.page = Math.min(pages, Math.max(1, target));
+  render();
+  $(".results").scrollIntoView({ behavior: "smooth" });
+};
+elements.pageJump.onchange = jumpToPage;
+elements.pageJump.onkeydown = (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  jumpToPage();
+};
 
 render();
 queueMicrotask(() => requestDataset({ automatic: true }));
