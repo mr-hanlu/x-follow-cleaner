@@ -6,6 +6,16 @@
 - [打开关注清理台](https://x-follow-cleaner.mrhanlu224.workers.dev/)
 - [查看完整技术说明](./TECHNICAL.md)
 
+## 效果预览
+
+### 油猴插件面板
+
+![X 关注清理助手油猴插件面板](./images/photo1.jpg)
+
+### 静态筛选页面
+
+![X 关注清理台静态筛选页面](./images/photo2.jpg)
+
 ## 主要功能
 
 - 断点导出当前账号的完整关注列表
