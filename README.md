@@ -202,6 +202,22 @@ Greasy Fork 会改写通过其安装的脚本更新地址，使后续更新继�
 - 活动队列与历史状态分离；成功账号不会重复进入活动队列。
 - 工具不会尝试轮换令牌或绕过平台限流。
 
+## 支持开发
+
+X Follow Cleaner 免费开放使用。如果它帮你节省了时间，可以自愿支持后续维护和浏览器扩展开发。赞助不会解锁额外功能，也不会影响正常使用。
+
+### 支付宝
+
+<img src="./images/photo3.jpg" width="340" alt="支付宝赞助收款码" />
+
+### 链上赞助
+
+- SOL（Solana Mainnet，仅接收 SOL）：`9tguPb7HzyhhhXV8W4MmVv1a2YWkzK7gUG1e3kjpJAC1`
+- ETH（Ethereum Mainnet，仅接收 ETH）：`0xc91b1fAF0F82A1CC4EC2Eb9882EDA79a946Ae6D3`
+- BTC（Bitcoin Mainnet，仅接收 BTC）：`bc1qlvzc7aymxtvxsfagd8uu2yr9f484d7l9hm939j`
+
+转账前请确认网络和地址。链上转账通常无法撤销。也可以[打开完整赞助页面](https://x-follow-cleaner.mrhanlu224.workers.dev/sponsor/)查看并复制地址。
+
 ## 许可证
 
 [MIT](./LICENSE)

@@ -3,7 +3,7 @@
 // @name:zh-CN   X/Twitter 关注清理助手｜活跃分析与安全分批取消
 // @name:en      X Following Cleaner – Activity Review & Safe Batch Unfollow
 // @namespace    https://github.com/mr-hanlu/x-follow-cleaner
-// @version      0.8.0
+// @version      0.8.1
 // @description  导出关注列表、匿名探测公开主页活跃时间，并按确认队列分批取消关注。
 // @description:zh-CN 本地导出并筛选 X/Twitter 关注列表，匿名检查最近公开活动，按确认队列安全分批取消关注。
 // @description:en Export and review your X/Twitter following list locally, check recent public activity, and unfollow confirmed accounts in controlled batches.
@@ -13,6 +13,8 @@
 // @match        https://x-follow-cleaner.mrhanlu224.workers.dev/*
 // @icon         https://x-follow-cleaner.mrhanlu224.workers.dev/favicon.svg
 // @homepageURL  https://x-follow-cleaner.mrhanlu224.workers.dev/
+// @contributionURL https://x-follow-cleaner.mrhanlu224.workers.dev/sponsor/
+// @contributionAmount 5 USD
 // @updateURL    https://x-follow-cleaner.mrhanlu224.workers.dev/download/x-follow-cleaner.user.js
 // @downloadURL  https://x-follow-cleaner.mrhanlu224.workers.dev/download/x-follow-cleaner.user.js
 // @run-at       document-idle
@@ -31,6 +33,7 @@
 "use strict";
 window.XFollowCleaner = window.XFollowCleaner || {};
 window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.workers.dev/";
+window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.dev/sponsor/";
 
 /* ---- core.js ---- */
 (function (app) {
@@ -1749,6 +1752,8 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
 
 /* ---- panel.js ---- */
 (function (app) {
+  const SUPPORT_PROMPT_KEY = "xfc:support-prompt:v1";
+  const SUPPORT_COOLDOWN_MS = 45 * 24 * 60 * 60 * 1000;
   const styles = `
     #xfc-launch{position:fixed;right:18px;bottom:18px;z-index:2147483646;border:0;border-radius:999px;padding:11px 16px;background:#0f1419;color:#fff;font:700 13px system-ui;box-shadow:0 10px 35px #0004;cursor:pointer}
     #xfc-panel{position:fixed;right:18px;bottom:70px;z-index:2147483647;width:min(430px,calc(100vw - 28px));max-height:78vh;overflow:auto;overscroll-behavior:contain;border:1px solid #cfd9de;border-radius:18px;background:#fff;color:#0f1419;box-shadow:0 24px 80px #0005;font:13px/1.45 system-ui}
@@ -1769,6 +1774,8 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
     .xfc-queue-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:9px 0 6px}.xfc-queue-head strong{font-size:11px}.xfc-queue-list{height:118px!important;background:#f7f9f9!important;color:#536471!important}.xfc-queue-list[hidden]{display:none}
     #xfc-panel details{margin-top:10px;padding:9px;border:1px solid #eff3f4;border-radius:10px;background:#f7f9f9}#xfc-panel summary{cursor:pointer;color:#536471;font-size:11px;font-weight:700}#xfc-panel details ol{margin:8px 0 0;padding-left:19px;color:#536471;font-size:11px}#xfc-panel details li+li{margin-top:4px}#xfc-panel .xfc-help-note{margin-top:8px!important;color:#2e7352;font-size:10px}#xfc-panel .xfc-template-note{margin-top:8px;color:#2e7d53;font-size:11px}
     #xfc-log{max-height:150px;min-height:50px;overflow:auto;margin-top:10px;padding:9px;border-radius:9px;background:#f7f9f9;color:#536471;font:10px/1.55 ui-monospace,monospace;white-space:pre-wrap}
+    #xfc-support-prompt{margin:0 0 12px;padding:11px 12px;border:1px solid #eadca9;border-radius:11px;background:#fff8dc;color:#655016}#xfc-support-prompt[hidden]{display:none}#xfc-support-prompt strong{display:block;color:#0f1419;font-size:12px}#xfc-support-prompt p{margin-top:4px!important;font-size:10px;line-height:1.55}#xfc-support-prompt .row{margin-top:9px}
+    #xfc-panel .xfc-support-footer{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;padding:11px 12px;border:1px solid #eff3f4;border-radius:11px;background:#f7f9f9;color:#536471;font-size:10px}#xfc-panel .xfc-support-footer .xfc-btn{flex:0 0 auto;border-color:#eadca9;background:#fff8dc;color:#745f28}
   `;
 
   function el(id) {
@@ -1807,6 +1814,11 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
           </div>
           <main>
             <div id="xfc-account-summary">正在读取本地进度…</div>
+            <div id="xfc-support-prompt" hidden>
+              <strong>这个工具帮你节省了时间吗？</strong>
+              <p>可以自愿支持后续维护。赞助不会解锁额外功能，也不会影响正常使用。</p>
+              <div class="row"><a class="xfc-btn" id="xfc-support-prompt-link" target="_blank" rel="noreferrer">赞助开发者</a><button id="xfc-support-later">稍后再说</button><button id="xfc-support-never">不再提示</button></div>
+            </div>
             <section>
               <h3>1. 导出关注列表（登录态）</h3>
               <details>
@@ -1858,10 +1870,14 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
               <div class="xfc-progress" id="xfc-unfollow-progress" hidden><div class="xfc-progress-track"><span class="xfc-progress-bar"></span></div><small>等待开始</small></div>
             </section>
             <div id="xfc-log">[XFC] 等待操作。控制台可用 “XFC” 过滤完整日志。</div>
+            <div class="xfc-support-footer"><span>免费使用 · 自愿支持后续维护</span><a class="xfc-btn" id="xfc-support" target="_blank" rel="noreferrer">♥ 赞助开发者</a></div>
           </main>
         </aside>
       `);
       el("xfc-dashboard").href = app.dashboardUrl;
+      for (const id of ["xfc-support", "xfc-support-prompt-link"]) {
+        el(id).href = app.sponsorUrl;
+      }
       const logLines = [];
       const showLog = (detail) => {
         const time = new Date().toLocaleTimeString();
@@ -1891,6 +1907,37 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
         const button = el(id);
         button.disabled = busy;
         button.textContent = busy ? busyLabel : normalLabel;
+      };
+      const hideSupportPrompt = () => {
+        el("xfc-support-prompt").hidden = true;
+      };
+      const recordSupportMilestone = async (milestone) => {
+        const fallback = {
+          success_count: 0,
+          shown_count: 0,
+          last_shown_at: "",
+          dismissed_forever: false,
+          milestones: []
+        };
+        const saved = await app.gmGet(SUPPORT_PROMPT_KEY, fallback);
+        const state = saved && typeof saved === "object" ? { ...fallback, ...saved } : fallback;
+        state.milestones = Array.isArray(state.milestones) ? state.milestones : [];
+        if (state.milestones.includes(milestone)) return;
+        state.milestones = [...state.milestones.slice(-19), milestone];
+        state.success_count = Number(state.success_count || 0) + 1;
+        const lastShown = Date.parse(state.last_shown_at || "");
+        const cooldownPassed = !Number.isFinite(lastShown) || Date.now() - lastShown >= SUPPORT_COOLDOWN_MS;
+        if (
+          !state.dismissed_forever &&
+          Number(state.shown_count || 0) < 2 &&
+          state.success_count >= 2 &&
+          cooldownPassed
+        ) {
+          state.shown_count = Number(state.shown_count || 0) + 1;
+          state.last_shown_at = new Date().toISOString();
+          el("xfc-support-prompt").hidden = false;
+        }
+        await app.gmSet(SUPPORT_PROMPT_KEY, state);
       };
       const watchedQueueKeys = new Set();
       const refreshQueue = async (writeLog = true) => {
@@ -2024,6 +2071,13 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
         else this.close();
       };
       el("xfc-close").onclick = () => this.close();
+      el("xfc-support-later").onclick = hideSupportPrompt;
+      el("xfc-support-prompt-link").onclick = hideSupportPrompt;
+      el("xfc-support-never").onclick = async () => {
+        const state = await app.gmGet(SUPPORT_PROMPT_KEY, {});
+        await app.gmSet(SUPPORT_PROMPT_KEY, { ...state, dismissed_forever: true });
+        hideSupportPrompt();
+      };
       el("xfc-following-stop").onclick = () => {
         app.following.stop();
         log("已请求停止关注列表导出，将在当前请求结束后保存进度。", "warn", "Following");
@@ -2042,6 +2096,9 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
               total: dataset.accounts.length
             });
             log(`关注列表导出完成，共 ${dataset.accounts.length} 人。`, "info", "Following");
+            await recordSupportMilestone(
+              `following:${dataset.source_user_id}:${dataset.following_page || 0}`
+            );
           }
         } catch (error) {
           const message = error.message || String(error);
@@ -2066,6 +2123,11 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
             "info",
             "ProfileProbe"
           );
+          if (Number(dataset.profile_probe?.batch_completed || 0) > 0) {
+            await recordSupportMilestone(
+              `probe:${dataset.source_user_id}:${dataset.profile_probe?.started_at || Date.now()}`
+            );
+          }
         } catch (error) {
           const message = error.message || String(error);
           setProgress("xfc-probe-progress", { phase: "error", message });
@@ -2167,6 +2229,9 @@ window.XFollowCleaner.dashboardUrl = "https://x-follow-cleaner.mrhanlu224.worker
     GM_registerMenuCommand("导出当前 CSV", async () => {
       const dataset = await app.loadDataset();
       app.download("x_following_cleaner.csv", app.toCSV(dataset.accounts), "text/csv;charset=utf-8");
+    });
+    GM_registerMenuCommand("赞助开发者", () => {
+      window.open(app.sponsorUrl, "_blank", "noopener,noreferrer");
     });
   } else {
     app.bridge.install();

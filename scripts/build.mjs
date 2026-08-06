@@ -18,6 +18,7 @@ const userscriptUrl = new URL(
   "download/x-follow-cleaner.user.js",
   dashboard
 ).toString();
+const sponsorUrl = new URL("sponsor/", dashboard).toString();
 
 const modules = [
   "core.js",
@@ -35,11 +36,12 @@ const metadata = fs
   .replaceAll("__DASHBOARD_MATCH__", dashboardMatch)
   .replaceAll("__DASHBOARD_URL__", dashboard.toString())
   .replaceAll("__DASHBOARD_ICON__", dashboardIcon)
+  .replaceAll("__SPONSOR_URL__", sponsorUrl)
   .replaceAll("__USERSCRIPT_URL__", userscriptUrl);
 const body = modules
   .map((name) => `\n/* ---- ${name} ---- */\n${fs.readFileSync(path.join(sourceDir, name), "utf8")}`)
   .join("\n");
-const bundle = `${metadata}\n\n(function () {\n"use strict";\nwindow.XFollowCleaner = window.XFollowCleaner || {};\nwindow.XFollowCleaner.dashboardUrl = ${JSON.stringify(dashboard.toString())};\n${body}\n})();\n`;
+const bundle = `${metadata}\n\n(function () {\n"use strict";\nwindow.XFollowCleaner = window.XFollowCleaner || {};\nwindow.XFollowCleaner.dashboardUrl = ${JSON.stringify(dashboard.toString())};\nwindow.XFollowCleaner.sponsorUrl = ${JSON.stringify(sponsorUrl)};\n${body}\n})();\n`;
 
 fs.mkdirSync(path.dirname(output), { recursive: true });
 fs.mkdirSync(path.dirname(webOutput), { recursive: true });

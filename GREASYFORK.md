@@ -27,6 +27,17 @@
 
 关注数据和审核标记默认保存在当前浏览器。筛选页面不会接收 X Cookie、`ct0`、Authorization 或原始 cURL。匿名探测仍会暴露当前网络 IP，也可能遇到限流。最近活动时间来自公开页面中可见的少量内容，不代表完整推文历史。
 
+### 支持开发
+
+脚本免费提供。如果它帮你节省了时间，可以[自愿赞助后续维护](https://x-follow-cleaner.mrhanlu224.workers.dev/sponsor/)。赞助不会解锁额外功能，也不会影响脚本的正常使用。
+
+- 支付宝收款码：[打开赞助页面](https://x-follow-cleaner.mrhanlu224.workers.dev/sponsor/)
+- SOL（Solana Mainnet，仅接收 SOL）：`9tguPb7HzyhhhXV8W4MmVv1a2YWkzK7gUG1e3kjpJAC1`
+- ETH（Ethereum Mainnet，仅接收 ETH）：`0xc91b1fAF0F82A1CC4EC2Eb9882EDA79a946Ae6D3`
+- BTC（Bitcoin Mainnet，仅接收 BTC）：`bc1qlvzc7aymxtvxsfagd8uu2yr9f484d7l9hm939j`
+
+转账前请确认网络和地址。链上转账通常无法撤销。
+
 ## English
 
 Review your X/Twitter following list locally: export followed accounts, check recent public activity without X login cookies, filter by inactivity and follower count, then unfollow only confirmed accounts in controlled batches.
@@ -40,3 +51,14 @@ Review your X/Twitter following list locally: export followed accounts, check re
 5. Return to X and run a confirmed batch with your chosen size and delay.
 
 Data stays in the current browser by default. The dashboard does not receive X cookies, `ct0`, Authorization headers, or the original cURL. Public probing may still be rate-limited and does not represent a complete post history.
+
+### Support development
+
+The script remains free to use. If it has saved you time, you can [voluntarily support its maintenance](https://x-follow-cleaner.mrhanlu224.workers.dev/sponsor/). Contributions do not unlock features or affect normal use.
+
+- Alipay: [open the support page](https://x-follow-cleaner.mrhanlu224.workers.dev/sponsor/)
+- SOL (Solana Mainnet, SOL only): `9tguPb7HzyhhhXV8W4MmVv1a2YWkzK7gUG1e3kjpJAC1`
+- ETH (Ethereum Mainnet, ETH only): `0xc91b1fAF0F82A1CC4EC2Eb9882EDA79a946Ae6D3`
+- BTC (Bitcoin Mainnet, BTC only): `bc1qlvzc7aymxtvxsfagd8uu2yr9f484d7l9hm939j`
+
+Check the network and address before transferring. On-chain transfers are generally irreversible.

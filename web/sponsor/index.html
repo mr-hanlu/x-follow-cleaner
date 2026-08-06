@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="description" content="自愿支持 X Follow Cleaner 的持续维护与后续开发。" />
+    <title>支持开发 · X Follow Cleaner</title>
+    <link rel="icon" href="../favicon.svg" />
+    <link rel="stylesheet" href="./sponsor.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="../" aria-label="返回 X 关注清理台">
+        <span aria-hidden="true">🧹</span>
+        <strong>X Follow Cleaner</strong>
+      </a>
+      <a class="back-link" href="../">返回关注清理台</a>
+    </header>
+
+    <main>
+      <section class="intro">
+        <span class="eyebrow">SUPPORT THE PROJECT</span>
+        <h1>谢谢你愿意支持这个小工具</h1>
+        <p>
+          X Follow Cleaner 目前免费开放使用。如果它帮你节省了时间，可以自愿支持后续维护、
+          适配 X 的变化，以及浏览器扩展的开发。
+        </p>
+        <div class="promise">
+          <span aria-hidden="true">♥</span>
+          <p><strong>赞助完全自愿</strong>，不会解锁额外功能，也不会影响工具的正常使用。</p>
+        </div>
+      </section>
+
+      <section class="support-grid" aria-label="赞助方式">
+        <article class="payment-panel alipay-panel">
+          <div class="panel-heading">
+            <div>
+              <span class="eyebrow">ALIPAY</span>
+              <h2>支付宝</h2>
+            </div>
+            <span class="method-tag">推荐</span>
+          </div>
+          <p class="panel-copy">打开支付宝扫描下方二维码，可自行填写赞助金额。</p>
+          <div class="alipay-image-wrap">
+            <img src="./alipay.png" alt="支付宝赞助收款二维码" />
+          </div>
+          <p class="quiet">请在付款前确认支付宝页面显示的收款方信息。</p>
+        </article>
+
+        <article class="payment-panel crypto-panel">
+          <div class="panel-heading">
+            <div>
+              <span class="eyebrow">ON-CHAIN</span>
+              <h2>链上赞助</h2>
+            </div>
+            <span class="method-tag neutral">主网地址</span>
+          </div>
+          <p class="panel-copy">请严格核对网络和地址。链上转账通常无法撤销。</p>
+
+          <div class="wallet-list">
+            <section class="wallet-card" aria-labelledby="sol-title">
+              <div class="wallet-head">
+                <span class="coin sol" aria-hidden="true">SOL</span>
+                <div><h3 id="sol-title">Solana</h3><p>Solana Mainnet · 仅接收 SOL</p></div>
+              </div>
+              <code id="sol-address">9tguPb7HzyhhhXV8W4MmVv1a2YWkzK7gUG1e3kjpJAC1</code>
+              <div class="wallet-actions">
+                <button type="button" class="copy-button" data-copy="sol-address">复制地址</button>
+                <a href="https://solscan.io/account/9tguPb7HzyhhhXV8W4MmVv1a2YWkzK7gUG1e3kjpJAC1" target="_blank" rel="noopener noreferrer">在 Solscan 核验</a>
+              </div>
+            </section>
+
+            <section class="wallet-card" aria-labelledby="eth-title">
+              <div class="wallet-head">
+                <span class="coin eth" aria-hidden="true">ETH</span>
+                <div><h3 id="eth-title">Ethereum</h3><p>Ethereum Mainnet · 仅接收 ETH</p></div>
+              </div>
+              <code id="eth-address">0xc91b1fAF0F82A1CC4EC2Eb9882EDA79a946Ae6D3</code>
+              <div class="wallet-actions">
+                <button type="button" class="copy-button" data-copy="eth-address">复制地址</button>
+                <a href="https://etherscan.io/address/0xc91b1fAF0F82A1CC4EC2Eb9882EDA79a946Ae6D3" target="_blank" rel="noopener noreferrer">在 Etherscan 核验</a>
+              </div>
+            </section>
+
+            <section class="wallet-card" aria-labelledby="btc-title">
+              <div class="wallet-head">
+                <span class="coin btc" aria-hidden="true">BTC</span>
+                <div><h3 id="btc-title">Bitcoin</h3><p>Bitcoin Mainnet · 仅接收 BTC</p></div>
+              </div>
+              <code id="btc-address">bc1qlvzc7aymxtvxsfagd8uu2yr9f484d7l9hm939j</code>
+              <div class="wallet-actions">
+                <button type="button" class="copy-button" data-copy="btc-address">复制地址</button>
+                <a href="https://mempool.space/address/bc1qlvzc7aymxtvxsfagd8uu2yr9f484d7l9hm939j" target="_blank" rel="noopener noreferrer">在 Mempool 核验</a>
+              </div>
+            </section>
+          </div>
+        </article>
+      </section>
+
+      <section class="thanks">
+        <span aria-hidden="true">♥</span>
+        <div>
+          <h2>每一份支持都会变成维护这个项目的时间</h2>
+          <p>无论是否赞助，都感谢你使用、反馈和分享 X Follow Cleaner。</p>
+        </div>
+      </section>
+    </main>
+
+    <div class="toast" id="copy-toast" role="status" aria-live="polite" hidden>地址已复制</div>
+    <script src="./sponsor.js"></script>
+  </body>
+</html>

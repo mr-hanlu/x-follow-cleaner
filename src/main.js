@@ -8,6 +8,9 @@
       const dataset = await app.loadDataset();
       app.download("x_following_cleaner.csv", app.toCSV(dataset.accounts), "text/csv;charset=utf-8");
     });
+    GM_registerMenuCommand("赞助开发者", () => {
+      window.open(app.sponsorUrl, "_blank", "noopener,noreferrer");
+    });
   } else {
     app.bridge.install();
   }
