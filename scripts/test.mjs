@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const packageVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
 execFileSync(process.execPath, [path.join(root, "scripts", "build.mjs")], {
   cwd: root,
   env: { ...process.env, DASHBOARD_URL: "https://clean.example.com/" },
@@ -34,7 +35,7 @@ assert.match(bundle, /❓ 帮助/);
 assert.match(bundle, /怎么复制 Following cURL/);
 assert.match(bundle, /@license\s+MIT/);
 assert.match(bundle, /@name:en\s+X Following Cleaner/);
-assert.match(bundle, /@version\s+0\.8\.0/);
+assert.match(bundle, new RegExp(`@version\\s+${packageVersion.replaceAll(".", "\\.")}`));
 assert.match(bundle, /overscroll-behavior:contain/);
 assert.match(bundle, /passive:\s*false/);
 assert.match(bundle, /清空当前账号数据/);

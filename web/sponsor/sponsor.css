@@ -116,22 +116,28 @@ main {
   color: var(--green);
 }
 
-.promise > span { font-size: 16px; }
+.promise > span { color: #e0245e; font-size: 16px; }
 .promise p { margin: 0; font-size: 12px; }
 
 .support-grid {
   display: grid;
   grid-template-columns: minmax(310px, 0.82fr) minmax(480px, 1.18fr);
   gap: 18px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .payment-panel {
+  height: 100%;
   padding: 22px;
   border: 1px solid var(--line);
   border-radius: 22px;
   background: var(--surface);
   box-shadow: var(--shadow);
+}
+
+.crypto-panel {
+  display: flex;
+  flex-direction: column;
 }
 
 .panel-heading {
@@ -186,9 +192,16 @@ main {
   text-align: center;
 }
 
-.wallet-list { display: grid; gap: 10px; }
+.wallet-list {
+  display: grid;
+  flex: 1;
+  grid-template-rows: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
 
 .wallet-card {
+  display: flex;
+  flex-direction: column;
   padding: 15px;
   border: 1px solid var(--line);
   border-radius: 15px;
@@ -242,6 +255,7 @@ main {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  margin-top: auto;
 }
 
 .wallet-actions button,
@@ -311,7 +325,9 @@ main {
 @media (max-width: 840px) {
   main { padding-top: 42px; }
   .support-grid { grid-template-columns: 1fr; }
+  .payment-panel { height: auto; }
   .alipay-panel { max-width: 560px; margin: 0 auto; }
+  .wallet-list { grid-template-rows: none; }
 }
 
 @media (max-width: 560px) {

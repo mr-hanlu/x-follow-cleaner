@@ -1758,7 +1758,7 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
     #xfc-launch{position:fixed;right:18px;bottom:18px;z-index:2147483646;border:0;border-radius:999px;padding:11px 16px;background:#0f1419;color:#fff;font:700 13px system-ui;box-shadow:0 10px 35px #0004;cursor:pointer}
     #xfc-panel{position:fixed;right:18px;bottom:70px;z-index:2147483647;width:min(430px,calc(100vw - 28px));max-height:78vh;overflow:auto;overscroll-behavior:contain;border:1px solid #cfd9de;border-radius:18px;background:#fff;color:#0f1419;box-shadow:0 24px 80px #0005;font:13px/1.45 system-ui}
     #xfc-panel[hidden]{display:none}#xfc-panel header{position:sticky;top:0;z-index:2;display:flex;justify-content:space-between;align-items:center;padding:15px 17px;background:#fff;border-bottom:1px solid #eff3f4}
-    #xfc-panel .xfc-header-actions{display:flex;align-items:center;gap:7px}
+    #xfc-panel .xfc-header-actions{display:flex;align-items:center;gap:7px}#xfc-panel .xfc-header-support{display:inline-flex;align-items:center;gap:5px;border:1px solid #f0bdca;border-radius:999px;padding:6px 10px;background:#fff;color:#0f1419;text-decoration:none;font:700 12px system-ui;white-space:nowrap}#xfc-panel .xfc-header-support span{color:#e0245e;font-size:14px;line-height:1}#xfc-panel .xfc-header-support:hover{background:#fff1f4}
     #xfc-panel h2,#xfc-panel p{margin:0}#xfc-panel h2{font-size:17px}#xfc-panel main{padding:14px 17px 18px}#xfc-panel section{padding:13px 0;border-bottom:1px solid #eff3f4}
     #xfc-panel section:last-child{border:0}#xfc-panel h3{margin:0 0 9px;font-size:13px}#xfc-panel textarea{width:100%;height:90px;box-sizing:border-box;padding:9px;border:1px solid #cfd9de;border-radius:9px;font:11px/1.4 ui-monospace,monospace;resize:vertical}
     #xfc-panel .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}#xfc-panel button,#xfc-panel a.xfc-btn{border:1px solid #cfd9de;border-radius:999px;padding:7px 11px;background:#fff;color:#0f1419;text-decoration:none;font:700 12px system-ui;cursor:pointer}
@@ -1775,7 +1775,7 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
     #xfc-panel details{margin-top:10px;padding:9px;border:1px solid #eff3f4;border-radius:10px;background:#f7f9f9}#xfc-panel summary{cursor:pointer;color:#536471;font-size:11px;font-weight:700}#xfc-panel details ol{margin:8px 0 0;padding-left:19px;color:#536471;font-size:11px}#xfc-panel details li+li{margin-top:4px}#xfc-panel .xfc-help-note{margin-top:8px!important;color:#2e7352;font-size:10px}#xfc-panel .xfc-template-note{margin-top:8px;color:#2e7d53;font-size:11px}
     #xfc-log{max-height:150px;min-height:50px;overflow:auto;margin-top:10px;padding:9px;border-radius:9px;background:#f7f9f9;color:#536471;font:10px/1.55 ui-monospace,monospace;white-space:pre-wrap}
     #xfc-support-prompt{margin:0 0 12px;padding:11px 12px;border:1px solid #eadca9;border-radius:11px;background:#fff8dc;color:#655016}#xfc-support-prompt[hidden]{display:none}#xfc-support-prompt strong{display:block;color:#0f1419;font-size:12px}#xfc-support-prompt p{margin-top:4px!important;font-size:10px;line-height:1.55}#xfc-support-prompt .row{margin-top:9px}
-    #xfc-panel .xfc-support-footer{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;padding:11px 12px;border:1px solid #eff3f4;border-radius:11px;background:#f7f9f9;color:#536471;font-size:10px}#xfc-panel .xfc-support-footer .xfc-btn{flex:0 0 auto;border-color:#eadca9;background:#fff8dc;color:#745f28}
+    #xfc-panel .xfc-support-heart{color:#e0245e}#xfc-panel details.xfc-data-management{margin-top:12px;background:#fff}#xfc-panel details.xfc-data-management p{margin:8px 0!important;color:#536471;font-size:10px}#xfc-panel details.xfc-data-management button{border-color:#f2a49d;color:#b42318}
   `;
 
   function el(id) {
@@ -1796,8 +1796,8 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
           <header>
             <h2>关注清理助手</h2>
             <div class="xfc-header-actions">
+              <a class="xfc-header-support" id="xfc-support" target="_blank" rel="noreferrer"><span aria-hidden="true">♥</span>赞助开发者</a>
               <button class="xfc-help-button" id="xfc-help-toggle" title="使用帮助" aria-label="使用帮助" aria-expanded="false">❓ 帮助</button>
-              <button class="xfc-clear-danger" id="xfc-clear-data">清空当前账号数据</button>
               <button id="xfc-close">关闭</button>
             </div>
           </header>
@@ -1815,7 +1815,7 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
           <main>
             <div id="xfc-account-summary">正在读取本地进度…</div>
             <div id="xfc-support-prompt" hidden>
-              <strong>这个工具帮你节省了时间吗？</strong>
+              <strong><span class="xfc-support-heart" aria-hidden="true">♥</span> 这个工具帮你节省了时间吗？</strong>
               <p>可以自愿支持后续维护。赞助不会解锁额外功能，也不会影响正常使用。</p>
               <div class="row"><a class="xfc-btn" id="xfc-support-prompt-link" target="_blank" rel="noreferrer">赞助开发者</a><button id="xfc-support-later">稍后再说</button><button id="xfc-support-never">不再提示</button></div>
             </div>
@@ -1870,7 +1870,11 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
               <div class="xfc-progress" id="xfc-unfollow-progress" hidden><div class="xfc-progress-track"><span class="xfc-progress-bar"></span></div><small>等待开始</small></div>
             </section>
             <div id="xfc-log">[XFC] 等待操作。控制台可用 “XFC” 过滤完整日志。</div>
-            <div class="xfc-support-footer"><span>免费使用 · 自愿支持后续维护</span><a class="xfc-btn" id="xfc-support" target="_blank" rel="noreferrer">♥ 赞助开发者</a></div>
+            <details class="xfc-data-management">
+              <summary>数据管理</summary>
+              <p>只清除当前活动账号的本地数据，其他账号不受影响。</p>
+              <button class="xfc-clear-danger" id="xfc-clear-data">清空当前账号数据</button>
+            </details>
           </main>
         </aside>
       `);
