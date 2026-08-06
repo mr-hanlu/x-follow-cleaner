@@ -996,9 +996,9 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
       if (!dataset.accounts.length) throw new Error("请先导出关注列表。");
       const sourceUserId = String(dataset.source_user_id || "");
       const lease = await app.acquireTaskLease(sourceUserId, "profile-probe", 90000);
-      const intervalMs = Math.max(500, Number(options.intervalMs || 3000));
+      const intervalMs = Math.max(500, Number(options.intervalMs || 1000));
       const limit = Math.max(0, Number(options.limit || 0));
-      const concurrency = Math.min(8, Math.max(1, Number(options.concurrency || 1)));
+      const concurrency = Math.min(8, Math.max(1, Number(options.concurrency || 8)));
       const retryFailed = Boolean(options.retryFailed);
       const transient = new Set(["rate_limited", "request_error", "parse_error"]);
       let targets = dataset.accounts.filter((account) =>
@@ -1774,8 +1774,9 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
     .xfc-queue-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:9px 0 6px}.xfc-queue-head strong{font-size:11px}.xfc-queue-list{height:118px!important;background:#f7f9f9!important;color:#536471!important}.xfc-queue-list[hidden]{display:none}
     #xfc-panel details{margin-top:10px;padding:9px;border:1px solid #eff3f4;border-radius:10px;background:#f7f9f9}#xfc-panel summary{cursor:pointer;color:#536471;font-size:11px;font-weight:700}#xfc-panel details ol{margin:8px 0 0;padding-left:19px;color:#536471;font-size:11px}#xfc-panel details li+li{margin-top:4px}#xfc-panel .xfc-help-note{margin-top:8px!important;color:#2e7352;font-size:10px}#xfc-panel .xfc-template-note{margin-top:8px;color:#2e7d53;font-size:11px}
     #xfc-log{max-height:150px;min-height:50px;overflow:auto;margin-top:10px;padding:9px;border-radius:9px;background:#f7f9f9;color:#536471;font:10px/1.55 ui-monospace,monospace;white-space:pre-wrap}
-    #xfc-support-prompt{margin:0 0 12px;padding:11px 12px;border:1px solid #eadca9;border-radius:11px;background:#fff8dc;color:#655016}#xfc-support-prompt[hidden]{display:none}#xfc-support-prompt strong{display:block;color:#0f1419;font-size:12px}#xfc-support-prompt p{margin-top:4px!important;font-size:10px;line-height:1.55}#xfc-support-prompt .row{margin-top:9px}
-    #xfc-panel .xfc-support-heart{color:#e0245e}#xfc-panel details.xfc-data-management{margin-top:12px;background:#fff}#xfc-panel details.xfc-data-management p{margin:8px 0!important;color:#536471;font-size:10px}#xfc-panel details.xfc-data-management button{border-color:#f2a49d;color:#b42318}
+    #xfc-support-prompt{width:min(360px,calc(100vw - 32px));box-sizing:border-box;border:1px solid #eadca9;border-radius:18px;padding:0;background:#fffdf5;color:#0f1419;box-shadow:0 24px 90px #0007;font:13px/1.5 system-ui}#xfc-support-prompt::backdrop{background:#0f141966;backdrop-filter:blur(2px)}#xfc-support-prompt .xfc-support-dialog-head{display:flex;align-items:center;justify-content:space-between;padding:15px 17px;border-bottom:1px solid #f2e8bf}#xfc-support-prompt h2,#xfc-support-prompt p{margin:0}#xfc-support-prompt h2{display:flex;align-items:center;gap:7px;font-size:16px}#xfc-support-prompt h2 span{color:#e0245e;font-size:19px}#xfc-support-prompt .xfc-support-dialog-close{border:0;background:transparent;color:#655016;font-size:18px;cursor:pointer}#xfc-support-prompt .xfc-support-dialog-body{padding:15px 17px;color:#655016}#xfc-support-prompt .xfc-support-dialog-note{margin-top:8px!important;color:#536471;font-size:11px}#xfc-support-prompt .xfc-support-dialog-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;padding:0 17px 16px}#xfc-support-prompt .xfc-support-dialog-actions button,#xfc-support-prompt .xfc-support-dialog-actions a{border:1px solid #d9c77f;border-radius:999px;padding:8px 12px;background:#fff;color:#655016;text-decoration:none;font:700 12px system-ui;cursor:pointer}#xfc-support-prompt .xfc-support-dialog-actions a{border-color:#e0245e;background:#e0245e;color:#fff}
+    #xfc-panel .xfc-support-heart{color:#e0245e}#xfc-panel details.xfc-data-management{margin-top:12px;border-color:#e6c7c3;background:#fff8f7}#xfc-panel details.xfc-data-management summary{display:flex;align-items:center;justify-content:space-between;gap:12px;color:#7a271f;font-size:12px;list-style:none}#xfc-panel details.xfc-data-management summary::-webkit-details-marker{display:none}#xfc-panel details.xfc-data-management summary::after{content:"展开 ›";color:#9a514a;font-size:10px}#xfc-panel details.xfc-data-management[open] summary::after{content:"收起⌄"}#xfc-panel details.xfc-data-management p{margin:9px 0!important;color:#536471;font-size:10px}#xfc-panel details.xfc-data-management button{border-color:#f2a49d;color:#b42318}
+    #xfc-unfollow-confirm{width:min(390px,calc(100vw - 32px));box-sizing:border-box;border:1px solid #cfd9de;border-radius:18px;padding:0;background:#fff;color:#0f1419;box-shadow:0 24px 90px #0007;font:13px/1.45 system-ui}#xfc-unfollow-confirm::backdrop{background:#0f141980;backdrop-filter:blur(2px)}#xfc-unfollow-confirm form{margin:0}#xfc-unfollow-confirm .xfc-dialog-head{display:flex;align-items:center;justify-content:space-between;padding:15px 17px;border-bottom:1px solid #eff3f4}#xfc-unfollow-confirm h2,#xfc-unfollow-confirm p{margin:0}#xfc-unfollow-confirm h2{font-size:17px}#xfc-unfollow-confirm .xfc-dialog-close{border:0;background:transparent;color:#536471;font-size:18px;cursor:pointer}#xfc-unfollow-confirm .xfc-dialog-body{padding:15px 17px}#xfc-unfollow-confirm dl{display:grid;grid-template-columns:auto 1fr;gap:7px 14px;margin:0 0 13px;padding:11px;border-radius:10px;background:#f7f9f9}#xfc-unfollow-confirm dt{color:#536471}#xfc-unfollow-confirm dd{margin:0;text-align:right;font-weight:700;overflow-wrap:anywhere}#xfc-unfollow-confirm .xfc-dialog-accounts{max-height:100px;overflow:auto;margin:8px 0 0;padding:9px 9px 9px 28px;border:1px solid #eff3f4;border-radius:9px;color:#536471;font:11px/1.5 ui-monospace,monospace}#xfc-unfollow-confirm .xfc-dialog-warning{margin-top:12px;padding:10px;border-radius:9px;background:#fff1f0;color:#8a1c13;font-size:11px}#xfc-unfollow-confirm .xfc-dialog-warning.error{background:#b42318;color:#fff}#xfc-unfollow-confirm .xfc-dialog-actions{display:flex;justify-content:flex-end;gap:8px;padding:0 17px 16px}#xfc-unfollow-confirm .xfc-dialog-actions button{border:1px solid #cfd9de;border-radius:999px;padding:8px 13px;background:#fff;color:#0f1419;font:700 12px system-ui;cursor:pointer}#xfc-unfollow-confirm .xfc-dialog-actions button.danger{border-color:#b42318;background:#b42318;color:#fff}#xfc-unfollow-confirm .xfc-dialog-actions button:disabled{cursor:not-allowed;opacity:.5}
   `;
 
   function el(id) {
@@ -1801,7 +1802,7 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
               <button id="xfc-close">关闭</button>
             </div>
           </header>
-          <div id="xfc-help" hidden>
+          <div id="xfc-help" tabindex="-1" hidden>
             <strong>使用流程</strong>
             <ol>
               <li><b>导出关注列表：</b>从 X 读取当前账号的完整关注列表。</li>
@@ -1814,11 +1815,6 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
           </div>
           <main>
             <div id="xfc-account-summary">正在读取本地进度…</div>
-            <div id="xfc-support-prompt" hidden>
-              <strong><span class="xfc-support-heart" aria-hidden="true">♥</span> 这个工具帮你节省了时间吗？</strong>
-              <p>可以自愿支持后续维护。赞助不会解锁额外功能，也不会影响正常使用。</p>
-              <div class="row"><a class="xfc-btn" id="xfc-support-prompt-link" target="_blank" rel="noreferrer">赞助开发者</a><button id="xfc-support-later">稍后再说</button><button id="xfc-support-never">不再提示</button></div>
-            </div>
             <section>
               <h3>1. 导出关注列表（登录态）</h3>
               <details>
@@ -1840,11 +1836,12 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
               <h3>2. 检查最近可见推文时间</h3>
               <div class="row">
                 <label>本次最多<input id="xfc-probe-limit" type="number" min="0" value="50"></label>
-                <label>间隔（秒）<input id="xfc-probe-delay" type="number" min="1" value="3"></label>
-                <label>并发数<input id="xfc-probe-concurrency" type="number" min="1" max="8" value="2"></label>
+                <label>间隔（秒）<input id="xfc-probe-delay" type="number" min="1" value="1"></label>
+                <label>并发数<input id="xfc-probe-concurrency" type="number" min="1" max="8" value="8"></label>
                 <label><span>数量</span><span><input id="xfc-probe-all" type="checkbox">处理全部剩余</span></label>
                 <label><span>范围</span><span><input id="xfc-retry-failed" type="checkbox">重试全部异常</span></label>
               </div>
+              <p class="xfc-help-note">当前默认为快速检查：1 秒、并发 8。遇到 429 时会停止并保存进度，请降低并发或延长间隔后继续。</p>
               <div class="row"><button class="primary" id="xfc-probe-start">开始检查</button><button id="xfc-probe-stop">停止检查</button></div>
               <div class="xfc-progress" id="xfc-probe-progress" hidden><div class="xfc-progress-track"><span class="xfc-progress-bar"></span></div><small>等待开始</small></div>
             </section>
@@ -1866,17 +1863,55 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
                 <label>本批数量<input id="xfc-batch-size" type="number" min="1" max="50" value="10"></label>
                 <label>间隔（秒）<input id="xfc-unfollow-delay" type="number" min="1" value="5"></label>
               </div>
-              <div class="row"><button class="danger" id="xfc-unfollow-start">确认并执行一批</button><button id="xfc-unfollow-stop">停止取消任务</button></div>
+              <div class="row"><button class="danger" id="xfc-unfollow-start">执行这一批</button><button id="xfc-unfollow-stop">停止取消任务</button></div>
               <div class="xfc-progress" id="xfc-unfollow-progress" hidden><div class="xfc-progress-track"><span class="xfc-progress-bar"></span></div><small>等待开始</small></div>
             </section>
-            <div id="xfc-log">[XFC] 等待操作。控制台可用 “XFC” 过滤完整日志。</div>
+            <div id="xfc-log" tabindex="0" role="log" aria-label="运行日志">[XFC] 等待操作。控制台可用 “XFC” 过滤完整日志。</div>
             <details class="xfc-data-management">
-              <summary>数据管理</summary>
-              <p>只清除当前活动账号的本地数据，其他账号不受影响。</p>
+              <summary><span>⚙ 数据管理 · 清空/重置</span></summary>
+              <p>需要重新开始时，可清空当前账号的关注列表、检查结果和取消队列；其他账号不受影响。</p>
               <button class="xfc-clear-danger" id="xfc-clear-data">清空当前账号数据</button>
             </details>
           </main>
         </aside>
+        <dialog id="xfc-unfollow-confirm" aria-labelledby="xfc-unfollow-confirm-title">
+          <form method="dialog">
+            <div class="xfc-dialog-head">
+              <h2 id="xfc-unfollow-confirm-title">确认执行这一批</h2>
+              <button class="xfc-dialog-close" value="cancel" aria-label="关闭确认弹窗">×</button>
+            </div>
+            <div class="xfc-dialog-body">
+              <dl>
+                <dt>本批人数</dt><dd id="xfc-confirm-count">0 人</dd>
+                <dt>请求间隔</dt><dd id="xfc-confirm-delay">—</dd>
+                <dt>队列账号</dt><dd id="xfc-confirm-source">—</dd>
+                <dt>当前登录</dt><dd id="xfc-confirm-login">—</dd>
+              </dl>
+              <strong>即将取消关注</strong>
+              <ol class="xfc-dialog-accounts" id="xfc-confirm-accounts"></ol>
+              <p class="xfc-dialog-warning" id="xfc-confirm-warning">取消关注会立即提交到 X，本工具不会自动恢复；请确认队列和当前账号无误。</p>
+            </div>
+            <div class="xfc-dialog-actions">
+              <button value="cancel">返回检查</button>
+              <button class="danger" id="xfc-confirm-submit" value="confirm">确认取消关注</button>
+            </div>
+          </form>
+        </dialog>
+        <dialog id="xfc-support-prompt" aria-labelledby="xfc-support-prompt-title">
+          <div class="xfc-support-dialog-head">
+            <h2 id="xfc-support-prompt-title"><span aria-hidden="true">♥</span>这个工具帮你节省了时间吗？</h2>
+            <button class="xfc-support-dialog-close" id="xfc-support-prompt-close" type="button" aria-label="关闭赞助提示">×</button>
+          </div>
+          <div class="xfc-support-dialog-body">
+            <p>如果它确实帮到了你，可以自愿支持后续维护和浏览器扩展开发。</p>
+            <p class="xfc-support-dialog-note">赞助不会解锁额外功能，也不会影响工具的正常使用。</p>
+          </div>
+          <div class="xfc-support-dialog-actions">
+            <button id="xfc-support-never" type="button">不再提示</button>
+            <button id="xfc-support-later" type="button">稍后再说</button>
+            <a id="xfc-support-prompt-link" target="_blank" rel="noreferrer">♥ 赞助开发者</a>
+          </div>
+        </dialog>
       `);
       el("xfc-dashboard").href = app.dashboardUrl;
       for (const id of ["xfc-support", "xfc-support-prompt-link"]) {
@@ -1912,8 +1947,50 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
         button.disabled = busy;
         button.textContent = busy ? busyLabel : normalLabel;
       };
+      const confirmUnfollowBatch = ({ size, intervalSeconds, sourceUserId, loggedAccountId, targets }) => {
+        const dialog = el("xfc-unfollow-confirm");
+        const mismatch = Boolean(loggedAccountId && sourceUserId && loggedAccountId !== sourceUserId);
+        el("xfc-confirm-count").textContent = `${targets.length} 人（最多 ${size} 人）`;
+        el("xfc-confirm-delay").textContent = `${intervalSeconds} 秒`;
+        el("xfc-confirm-source").textContent = sourceUserId || "未知";
+        el("xfc-confirm-login").textContent = loggedAccountId || "未读取到";
+        const accounts = el("xfc-confirm-accounts");
+        accounts.replaceChildren();
+        for (const target of targets.slice(0, 5)) {
+          const item = document.createElement("li");
+          item.textContent = `@${target.screen_name || target.account_id}`;
+          accounts.append(item);
+        }
+        if (targets.length > 5) {
+          const more = document.createElement("li");
+          more.textContent = `以及另外 ${targets.length - 5} 人`;
+          accounts.append(more);
+        }
+        if (!targets.length) {
+          const empty = document.createElement("li");
+          empty.textContent = "当前没有可以执行的待取消账号";
+          accounts.append(empty);
+        }
+        const warning = el("xfc-confirm-warning");
+        warning.classList.toggle("error", mismatch || !targets.length);
+        warning.textContent = mismatch
+          ? `账号不匹配：当前登录账号是 ${loggedAccountId}，取消队列属于 ${sourceUserId}。`
+          : !targets.length
+            ? "当前队列中没有可执行账号，请返回筛选页面检查并重新发送队列。"
+            : loggedAccountId
+              ? "取消关注会立即提交到 X，本工具不会自动恢复；请确认以上账号无误。"
+              : "无法读取当前登录账号 ID。执行时仍会校验登录状态，请先确认队列属于当前账号。";
+        el("xfc-confirm-submit").disabled = mismatch || !targets.length;
+        dialog.returnValue = "";
+        return new Promise((resolve) => {
+          dialog.addEventListener("close", () => resolve(dialog.returnValue === "confirm"), { once: true });
+          dialog.showModal();
+          dialog.querySelector('button[value="cancel"]').focus();
+        });
+      };
       const hideSupportPrompt = () => {
-        el("xfc-support-prompt").hidden = true;
+        const prompt = el("xfc-support-prompt");
+        if (prompt.open) prompt.close();
       };
       const recordSupportMilestone = async (milestone) => {
         const fallback = {
@@ -1939,7 +2016,8 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
         ) {
           state.shown_count = Number(state.shown_count || 0) + 1;
           state.last_shown_at = new Date().toISOString();
-          el("xfc-support-prompt").hidden = false;
+          const prompt = el("xfc-support-prompt");
+          if (!prompt.open) prompt.showModal();
         }
         await app.gmSet(SUPPORT_PROMPT_KEY, state);
       };
@@ -1955,7 +2033,7 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
         const failed = queue.filter((item) => item.status === "failed").length;
         const needsReview = queue.filter((item) => ["executing", "needs_review"].includes(item.status)).length;
         el("xfc-queue-summary").textContent =
-          `活动队列 ${pending.length} 人 · 历史成功 ${success}` +
+          `待处理队列 ${pending.length} 人 · 历史成功 ${success}` +
           (failed ? ` · 失败待重试 ${failed}` : "") +
           (needsReview ? ` · 待人工核验 ${needsReview}` : "");
         const list = el("xfc-queue-list");
@@ -2035,8 +2113,15 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
       app.on("log", (event) => showLog(event.detail));
       el("xfc-help-toggle").onclick = () => {
         const help = el("xfc-help");
-        help.hidden = !help.hidden;
-        el("xfc-help-toggle").setAttribute("aria-expanded", String(!help.hidden));
+        const opening = help.hidden;
+        help.hidden = !opening;
+        el("xfc-help-toggle").setAttribute("aria-expanded", String(opening));
+        if (opening) {
+          requestAnimationFrame(() => {
+            el("xfc-panel").scrollTo({ top: 0, behavior: "smooth" });
+            help.focus({ preventScroll: true });
+          });
+        }
       };
       this.open = () => {
         el("xfc-panel").hidden = false;
@@ -2046,6 +2131,22 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
         el("xfc-panel").hidden = true;
       };
       const panel = el("xfc-panel");
+      const logBox = el("xfc-log");
+      logBox.addEventListener("wheel", (event) => {
+        if (!event.deltaY || logBox.scrollHeight <= logBox.clientHeight) return;
+        const atTop = logBox.scrollTop <= 0;
+        const atBottom = Math.ceil(logBox.scrollTop + logBox.clientHeight) >= logBox.scrollHeight;
+        const canScrollInside = (event.deltaY < 0 && !atTop) || (event.deltaY > 0 && !atBottom);
+        if (!canScrollInside) return;
+        const multiplier = event.deltaMode === 1
+          ? 16
+          : event.deltaMode === 2
+            ? logBox.clientHeight
+            : 1;
+        event.preventDefault();
+        event.stopPropagation();
+        logBox.scrollTop += event.deltaY * multiplier;
+      }, { passive: false });
       panel.addEventListener("wheel", (event) => {
         const atTop = panel.scrollTop <= 0;
         const atBottom = Math.ceil(panel.scrollTop + panel.clientHeight) >= panel.scrollHeight;
@@ -2076,6 +2177,7 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
       };
       el("xfc-close").onclick = () => this.close();
       el("xfc-support-later").onclick = hideSupportPrompt;
+      el("xfc-support-prompt-close").onclick = hideSupportPrompt;
       el("xfc-support-prompt-link").onclick = hideSupportPrompt;
       el("xfc-support-never").onclick = async () => {
         const state = await app.gmGet(SUPPORT_PROMPT_KEY, {});
@@ -2194,13 +2296,33 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
         log("已恢复自动生成的 destroy.json 请求模板。", "info", "Unfollow");
       };
       el("xfc-unfollow-start").onclick = async () => {
-        const size = Number(el("xfc-batch-size").value);
-        if (!confirm(`确认执行最多 ${size} 个取消关注请求？`)) return;
-        setBusy("xfc-unfollow-start", true, "正在执行…", "确认并执行一批");
+        const size = Math.min(50, Math.max(1, Number(el("xfc-batch-size").value) || 10));
+        const intervalSeconds = Math.max(1, Number(el("xfc-unfollow-delay").value) || 5);
+        let queue;
+        let sourceUserId;
+        try {
+          queue = await refreshQueue(false);
+          sourceUserId = await app.getActiveSourceId();
+        } catch (error) {
+          log(error.message || String(error), "error", "Unfollow");
+          return;
+        }
+        const targets = queue.filter((item) =>
+          !["success", "executing", "needs_review"].includes(item.status)
+        ).slice(0, size);
+        const confirmed = await confirmUnfollowBatch({
+          size,
+          intervalSeconds,
+          sourceUserId,
+          loggedAccountId: app.getLoggedAccountId(),
+          targets
+        });
+        if (!confirmed) return;
+        setBusy("xfc-unfollow-start", true, "正在执行…", "执行这一批");
         try {
           await app.unfollow.start({
             batchSize: size,
-            intervalMs: Number(el("xfc-unfollow-delay").value) * 1000
+            intervalMs: intervalSeconds * 1000
           }, (update) => setProgress("xfc-unfollow-progress", update));
           if (!app.unfollow.stopRequested) {
             const message = el("xfc-unfollow-progress").querySelector("small").textContent;
@@ -2213,7 +2335,7 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
           setProgress("xfc-unfollow-progress", { phase: "error", message });
           log(message, "error", "Unfollow");
         } finally {
-          setBusy("xfc-unfollow-start", false, "", "确认并执行一批");
+          setBusy("xfc-unfollow-start", false, "", "执行这一批");
           await restoreState();
         }
       };

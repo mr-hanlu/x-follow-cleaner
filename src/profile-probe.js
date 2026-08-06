@@ -82,9 +82,9 @@
       if (!dataset.accounts.length) throw new Error("请先导出关注列表。");
       const sourceUserId = String(dataset.source_user_id || "");
       const lease = await app.acquireTaskLease(sourceUserId, "profile-probe", 90000);
-      const intervalMs = Math.max(500, Number(options.intervalMs || 3000));
+      const intervalMs = Math.max(500, Number(options.intervalMs || 1000));
       const limit = Math.max(0, Number(options.limit || 0));
-      const concurrency = Math.min(8, Math.max(1, Number(options.concurrency || 1)));
+      const concurrency = Math.min(8, Math.max(1, Number(options.concurrency || 8)));
       const retryFailed = Boolean(options.retryFailed);
       const transient = new Set(["rate_limited", "request_error", "parse_error"]);
       let targets = dataset.accounts.filter((account) =>
