@@ -1,7 +1,7 @@
 (function (app) {
   if (location.hostname === "x.com") {
     app.panel.mount();
-    GM_registerMenuCommand("打开关注清理助手", () => {
+    GM_registerMenuCommand("打开 X/推特取关助手", () => {
       app.panel.open();
     });
     GM_registerMenuCommand("导出当前 CSV", async () => {

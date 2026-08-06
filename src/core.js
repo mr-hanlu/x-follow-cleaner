@@ -384,7 +384,7 @@
     const now = Date.now();
     const current = await app.gmGet(key, null);
     if (current?.owner_id && Number(current.expires_at || 0) > now) {
-      const labels = { unfollow: "取消关注", "profile-probe": "匿名探测", following: "关注列表导出" };
+      const labels = { unfollow: "取消关注", "profile-probe": "最近推文检查", following: "关注列表导出" };
       throw new Error(`另一个页面正在执行${labels[taskType] || taskType}任务。`);
     }
     const ownerId = `${now}-${Math.random().toString(36).slice(2)}-${location.hostname}`;

@@ -3,14 +3,19 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <meta name="description" content="本地筛选 X 关注列表，并将待取消队列安全交回油猴脚本。" />
-    <title>X 关注清理台</title>
+    <meta name="description" content="X/推特取关助手：本地筛选关注列表、检查最近可见推文时间，并将确认过的账号安全分批取关。" />
+    <link rel="canonical" href="https://x-follow-cleaner.mrhanlu224.workers.dev/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="X/推特取关助手｜最近推文筛选与安全批量取关" />
+    <meta property="og:description" content="本地筛选 X/推特关注列表，检查最近可见推文时间，再将确认过的账号安全分批取关。" />
+    <meta property="og:url" content="https://x-follow-cleaner.mrhanlu224.workers.dev/" />
+    <title>X/推特取关助手｜最近推文筛选与安全批量取关</title>
     <link rel="icon" href="./favicon.svg" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <header class="topbar">
-      <a class="brand" href="./"><span aria-hidden="true">🧹</span><strong>关注清理台</strong></a>
+      <a class="brand" href="./"><span aria-hidden="true">🧹</span><strong>X/推特取关助手</strong></a>
       <div class="top-actions">
         <span id="bridge-state" class="pill warning">未连接油猴</span>
         <button class="help-button" id="help-toggle" title="使用帮助" aria-label="使用帮助">❓ 帮助</button>
@@ -27,8 +32,8 @@
       <div class="help-dialog-head"><h2 id="help-title">使用流程</h2><button id="help-close" aria-label="关闭帮助">关闭</button></div>
       <ol>
         <li><strong>导出关注列表</strong><span>在 X 页面打开油猴面板，按折叠说明复制 Following cURL 并导出。</span></li>
-        <li><strong>匿名探测公开主页</strong><span>不携带 X 登录 Cookie，获取最近可见活动时间。</span></li>
-        <li><strong>筛选并标记</strong><span>按活跃天数、粉丝数和数据状态筛选，标记保留或待取消。</span></li>
+        <li><strong>检查最近可见推文</strong><span>不携带 X 登录 Cookie，请求公开主页并获取最近可见推文时间。</span></li>
+        <li><strong>筛选并标记</strong><span>按距最近可见推文天数、粉丝数和数据状态筛选，标记保留或待取消。</span></li>
         <li><strong>发送待取消队列</strong><span>把当前选择同步回油猴；已成功处理的账号不会重复加入。</span></li>
         <li><strong>返回 X 分批执行</strong><span>设置本批数量和间隔，确认后执行。</span></li>
       </ol>
@@ -39,15 +44,15 @@
       <section class="hero">
         <div>
           <span class="eyebrow">LOCAL-FIRST REVIEW</span>
-          <h1>只根据必要信息整理关注</h1>
-          <p>关注数据、活跃时间与审核标记默认留在当前浏览器；X 登录凭据不会发送到本页面。</p>
+          <h1>筛选关注列表，安全分批取关</h1>
+          <p>关注数据、最近可见推文时间与审核标记默认留在当前浏览器；X 登录凭据不会发送到本页面。</p>
         </div>
         <div class="metrics">
           <div><span>全部账号</span><strong id="total-count">0</strong></div>
-          <div class="probe-metric"><span>探测进度</span><strong id="probe-count">0 / 0</strong><small id="probe-status">尚未开始</small><div class="metric-progress"><i id="probe-progress-bar"></i></div></div>
+          <div class="probe-metric"><span>推文检查进度</span><strong id="probe-count">0 / 0</strong><small id="probe-status">尚未开始</small><div class="metric-progress"><i id="probe-progress-bar"></i></div></div>
           <div><span>当前筛选</span><strong id="filtered-count">0</strong></div>
           <div><span>待取消</span><strong id="remove-count">0</strong></div>
-          <div><span>探测异常</span><strong id="error-count">0</strong></div>
+          <div><span>检查异常</span><strong id="error-count">0</strong></div>
         </div>
       </section>
 
@@ -60,20 +65,20 @@
         </div>
         <div class="filter-grid">
           <label class="field wide"><span>搜索</span><input id="query" placeholder="名称、用户名或用户 ID" /></label>
-          <label class="field"><span>未活跃不少于</span><div><input id="min-inactive" type="number" min="0" placeholder="不限" /><em>天</em></div></label>
-          <label class="field"><span>未活跃不高于</span><div><input id="max-inactive" type="number" min="0" placeholder="不限" /><em>天</em></div></label>
+          <label class="field"><span>距最近推文至少</span><div><input id="min-inactive" type="number" min="0" placeholder="不限" /><em>天</em></div></label>
+          <label class="field"><span>距最近推文至多</span><div><input id="max-inactive" type="number" min="0" placeholder="不限" /><em>天</em></div></label>
           <label class="field"><span>粉丝不少于</span><div><input id="min-followers" type="number" min="0" placeholder="不限" /><em>人</em></div></label>
           <label class="field"><span>粉丝不高于</span><div><input id="max-followers" type="number" min="0" placeholder="不限" /><em>人</em></div></label>
-          <label class="field"><span>探测状态</span><select id="data-status"><option value="all">全部状态</option><option value="ok">成功</option><option value="pending">未探测</option><option value="error">异常</option></select></label>
+          <label class="field"><span>推文检查状态</span><select id="data-status"><option value="all">全部状态</option><option value="ok">成功</option><option value="pending">未检查</option><option value="error">异常</option></select></label>
           <label class="field"><span>蓝标</span><select id="blue-status"><option value="all">全部</option><option value="blue">仅蓝标</option><option value="not_blue">非蓝标</option></select></label>
           <label class="field"><span>审核状态</span><select id="review-status"><option value="all">全部</option><option value="undecided">未决定</option><option value="keep">保留</option><option value="remove">待取消</option><option value="done">已处理</option></select></label>
-          <label class="field"><span>排序</span><select id="sort-key"><option value="inactive_desc">未活跃：高到低</option><option value="inactive_asc">未活跃：低到高</option><option value="followers_desc">粉丝：高到低</option><option value="followers_asc">粉丝：低到高</option><option value="name_asc">用户名 A–Z</option></select></label>
+          <label class="field"><span>排序</span><select id="sort-key"><option value="inactive_desc">最近推文：由久到近</option><option value="inactive_asc">最近推文：由近到久</option><option value="followers_desc">粉丝：高到低</option><option value="followers_asc">粉丝：低到高</option><option value="name_asc">用户名 A–Z</option></select></label>
         </div>
         <div class="chips">
           <span>快速筛选</span>
           <button data-days="30">30 天+</button><button data-days="90">90 天+</button>
           <button data-days="180">180 天+</button><button data-days="365">1 年+</button>
-          <button data-days="730">2 年+</button><button id="quick-errors">探测异常</button>
+          <button data-days="730">2 年+</button><button id="quick-errors">检查异常</button>
           <button id="quick-remove">待取消</button>
         </div>
       </section>
@@ -100,7 +105,7 @@
       </section>
     </main>
     <footer class="site-footer">
-      <span>X Follow Cleaner · 免费使用，数据默认保存在当前浏览器</span>
+      <span>X/推特取关助手 · 免费使用，数据默认保存在当前浏览器</span>
       <a href="./sponsor/"><span aria-hidden="true">♥</span> 赞助开发者</a>
     </footer>
     <script src="./dashboard.js"></script>

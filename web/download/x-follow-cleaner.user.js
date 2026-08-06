@@ -1,12 +1,12 @@
 // ==UserScript==
-// @name         X 关注清理助手
-// @name:zh-CN   X/Twitter 关注清理助手｜活跃分析与安全分批取消
-// @name:en      X Following Cleaner – Activity Review & Safe Batch Unfollow
+// @name         X/推特取关助手
+// @name:zh-CN   X/推特取关助手｜最近推文筛选与安全批量取关
+// @name:en      X Following Cleaner – Latest Post Review & Safe Batch Unfollow
 // @namespace    https://github.com/mr-hanlu/x-follow-cleaner
-// @version      0.8.1
-// @description  导出关注列表、匿名探测公开主页活跃时间，并按确认队列分批取消关注。
-// @description:zh-CN 本地导出并筛选 X/Twitter 关注列表，匿名检查最近公开活动，按确认队列安全分批取消关注。
-// @description:en Export and review your X/Twitter following list locally, check recent public activity, and unfollow confirmed accounts in controlled batches.
+// @version      0.8.2
+// @description  本地导出并筛选 X/推特关注列表，检查最近可见推文时间，再将确认过的账号安全分批取关。
+// @description:zh-CN X/推特批量取关工具：本地筛选关注列表，匿名检查最近可见推文时间，按确认队列安全取消关注。
+// @description:en Export and review your X/Twitter following list locally, check the latest publicly visible post time, and unfollow confirmed accounts in controlled batches.
 // @author       hanlu
 // @license      MIT
 // @match        https://x.com/*
@@ -422,7 +422,7 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
     const now = Date.now();
     const current = await app.gmGet(key, null);
     if (current?.owner_id && Number(current.expires_at || 0) > now) {
-      const labels = { unfollow: "取消关注", "profile-probe": "匿名探测", following: "关注列表导出" };
+      const labels = { unfollow: "取消关注", "profile-probe": "最近推文检查", following: "关注列表导出" };
       throw new Error(`另一个页面正在执行${labels[taskType] || taskType}任务。`);
     }
     const ownerId = `${now}-${Math.random().toString(36).slice(2)}-${location.hostname}`;
@@ -991,7 +991,7 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
     stopRequested: false,
 
     async start(options = {}, onProgress = () => {}) {
-      if (this.running) throw new Error("匿名主页探测已经在运行。");
+      if (this.running) throw new Error("最近推文检查已经在运行。");
       let dataset = await app.loadDataset();
       if (!dataset.accounts.length) throw new Error("请先导出关注列表。");
       const sourceUserId = String(dataset.source_user_id || "");
@@ -1041,8 +1041,8 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
       onProgress({
         phase: targets.length ? "start" : "complete",
         message: targets.length
-          ? `整体已探测 ${overallCompleted()}/${overallTotal} · 本轮 ${targets.length} · 并发 ${concurrency}`
-          : `已探测 ${overallCompleted()}/${overallTotal}，没有待处理账号`,
+          ? `整体已检查 ${overallCompleted()}/${overallTotal} · 本轮 ${targets.length} · 并发 ${concurrency}`
+          : `已检查 ${overallCompleted()}/${overallTotal}，没有待处理账号`,
         current: overallCompleted(),
         total: overallTotal,
         batch_current: 0,
@@ -1065,7 +1065,7 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
         const taskSnapshot = { ...dataset.profile_probe, updated_at: app.nowIso() };
         saveChain = saveChain.then(async () => {
           await app.saveProbeResults(sourceUserId, batch, taskSnapshot);
-          if (!await app.heartbeatTaskLease(lease)) throw new Error("匿名探测任务租约已失效，任务停止。");
+          if (!await app.heartbeatTaskLease(lease)) throw new Error("推文检查任务租约已失效，任务停止。");
         });
         return saveChain;
       };
@@ -1118,10 +1118,10 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
         pendingResults.push(result);
         scheduleFlush();
         if (pendingResults.length >= 5) await flushPending(true);
-        else if (!await app.heartbeatTaskLease(lease)) throw new Error("匿名探测任务租约已失效，任务停止。");
+        else if (!await app.heartbeatTaskLease(lease)) throw new Error("推文检查任务租约已失效，任务停止。");
         onProgress({
           phase: "progress",
-          message: `已探测 ${currentOverall}/${overallTotal} · 本轮 ${completed}/${targets.length}：@${target.screen_name} ${result.data_status}`,
+          message: `已检查 ${currentOverall}/${overallTotal} · 本轮 ${completed}/${targets.length}：@${target.screen_name} ${result.data_status}`,
           current: currentOverall,
           total: overallTotal,
           batch_current: completed,
@@ -1143,7 +1143,7 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
         }
         while (!this.stopRequested && !fatalError) {
           if (!await app.heartbeatTaskLease(lease)) {
-            fatalError = new Error("匿名探测任务租约已失效，任务停止。");
+            fatalError = new Error("推文检查任务租约已失效，任务停止。");
             return;
           }
           const targetIndex = nextTargetIndex;
@@ -1153,7 +1153,7 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
           let result;
           onProgress({
             phase: "request",
-            message: `已探测 ${overallCompleted()}/${overallTotal} · 正在请求本轮 ${targetIndex + 1}/${targets.length}：@${target.screen_name}`,
+            message: `已检查 ${overallCompleted()}/${overallTotal} · 正在请求本轮 ${targetIndex + 1}/${targets.length}：@${target.screen_name}`,
             current: overallCompleted(),
             total: overallTotal,
             batch_current: completed,
@@ -1229,7 +1229,7 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
           await app.saveProbeTask(sourceUserId, dataset.profile_probe);
           onProgress({
             phase: "stopped",
-            message: `已暂停 · 整体已探测 ${overallCompleted()}/${overallTotal} · 本轮完成 ${completed}/${targets.length}`,
+            message: `已暂停 · 整体已检查 ${overallCompleted()}/${overallTotal} · 本轮完成 ${completed}/${targets.length}`,
             current: overallCompleted(),
             total: overallTotal,
             batch_current: completed,
@@ -1253,8 +1253,8 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
           onProgress({
             phase: allAttempted ? "complete" : "stopped",
             message: allAttempted
-              ? `探测完成 · 已探测 ${currentOverall}/${overallTotal}`
-              : `本轮结束 · 整体已探测 ${currentOverall}/${overallTotal} · 本轮 ${completed}/${targets.length}`,
+              ? `检查完成 · 已检查 ${currentOverall}/${overallTotal}`
+              : `本轮结束 · 整体已检查 ${currentOverall}/${overallTotal} · 本轮 ${completed}/${targets.length}`,
             current: currentOverall,
             total: overallTotal,
             batch_current: completed,
@@ -1791,10 +1791,10 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
       style.textContent = styles;
       document.head.append(style);
       document.body.insertAdjacentHTML("beforeend", `
-        <button id="xfc-launch" type="button">关注清理助手</button>
+        <button id="xfc-launch" type="button">X/推特取关助手</button>
         <aside id="xfc-panel" hidden>
           <header>
-            <h2>关注清理助手</h2>
+            <h2>X/推特取关助手</h2>
             <div class="xfc-header-actions">
               <a class="xfc-header-support" id="xfc-support" target="_blank" rel="noreferrer"><span aria-hidden="true">♥</span>赞助开发者</a>
               <button class="xfc-help-button" id="xfc-help-toggle" title="使用帮助" aria-label="使用帮助" aria-expanded="false">❓ 帮助</button>
@@ -1805,8 +1805,8 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
             <strong>使用流程</strong>
             <ol>
               <li><b>导出关注列表：</b>从 X 读取当前账号的完整关注列表。</li>
-              <li><b>匿名探测：</b>不携带 X 登录 Cookie 请求公开主页，获取最近可见活动。</li>
-              <li><b>筛选与标记：</b>在筛选页标记保留或待取消账号。</li>
+              <li><b>检查最近推文：</b>不携带 X 登录 Cookie 请求公开主页，获取最近可见推文时间。</li>
+              <li><b>筛选与标记：</b>按距最近可见推文天数等条件，标记保留或待取消账号。</li>
               <li><b>发送队列：</b>把当前选择同步回油猴，已处理账号会自动排除。</li>
               <li><b>分批取消：</b>返回 X，设置数量和间隔，确认后执行。</li>
             </ol>
@@ -1837,7 +1837,7 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
               <div class="xfc-progress" id="xfc-following-progress" hidden><div class="xfc-progress-track"><span class="xfc-progress-bar"></span></div><small>等待开始</small></div>
             </section>
             <section>
-              <h3>2. 匿名探测公开主页</h3>
+              <h3>2. 检查最近可见推文时间</h3>
               <div class="row">
                 <label>本次最多<input id="xfc-probe-limit" type="number" min="0" value="50"></label>
                 <label>间隔（秒）<input id="xfc-probe-delay" type="number" min="1" value="3"></label>
@@ -1845,7 +1845,7 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
                 <label><span>数量</span><span><input id="xfc-probe-all" type="checkbox">处理全部剩余</span></label>
                 <label><span>范围</span><span><input id="xfc-retry-failed" type="checkbox">重试全部异常</span></label>
               </div>
-              <div class="row"><button class="primary" id="xfc-probe-start">开始探测</button><button id="xfc-probe-stop">停止探测</button></div>
+              <div class="row"><button class="primary" id="xfc-probe-start">开始检查</button><button id="xfc-probe-stop">停止检查</button></div>
               <div class="xfc-progress" id="xfc-probe-progress" hidden><div class="xfc-progress-track"><span class="xfc-progress-bar"></span></div><small>等待开始</small></div>
             </section>
             <section>
@@ -1982,7 +1982,7 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
         if (queue.length) {
           setProgress("xfc-unfollow-progress", {
             phase: "stopped",
-            message: `活动取消队列待处理 ${pending.length} 人 · 历史成功 ${success}`,
+            message: `取消队列待处理 ${pending.length} 人 · 历史成功 ${success}`,
             current: 0,
             total: pending.length
           });
@@ -1997,7 +1997,7 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
         const probed = dataset.accounts.filter((account) => account.fetched_at).length;
         const sourceUserId = String(dataset.source_user_id || "");
         el("xfc-account-summary").textContent = sourceUserId
-          ? `当前数据账号：${sourceUserId} · 关注 ${total} 人 · 已探测 ${probed}/${total}`
+          ? `当前数据账号：${sourceUserId} · 关注 ${total} 人 · 已检查 ${probed}/${total}`
           : "尚无账号数据，请先导出关注列表。";
         if (total || dataset.following_page) {
           setProgress("xfc-following-progress", {
@@ -2022,8 +2022,8 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
                   : "stopped",
             message:
               savedStatus === "running"
-                ? `${app.profileProbe.running ? "正在探测" : "上次任务中断，可安全继续"} · 已探测 ${probed}/${total}`
-                : `已探测 ${probed}/${total} · ${savedStatus === "error" ? "上次任务异常停止" : probed >= total ? "全部完成" : "等待继续"}`,
+                ? `${app.profileProbe.running ? "正在检查" : "上次任务中断，可安全继续"} · 已检查 ${probed}/${total}`
+                : `已检查 ${probed}/${total} · ${savedStatus === "error" ? "上次任务异常停止" : probed >= total ? "全部完成" : "等待继续"}`,
             current: probed,
             total
           });
@@ -2114,7 +2114,7 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
         }
       };
       el("xfc-probe-start").onclick = async () => {
-        setBusy("xfc-probe-start", true, "正在探测…", "开始探测");
+        setBusy("xfc-probe-start", true, "正在检查…", "开始检查");
         try {
           const dataset = await app.profileProbe.start({
             limit: el("xfc-probe-all").checked ? 0 : Number(el("xfc-probe-limit").value),
@@ -2123,7 +2123,7 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
             retryFailed: el("xfc-retry-failed").checked
           }, (update) => setProgress("xfc-probe-progress", update));
           log(
-            `本轮匿名探测结束，整体 ${dataset.profile_probe?.completed || 0}/${dataset.accounts.length}。`,
+            `本轮推文检查结束，整体 ${dataset.profile_probe?.completed || 0}/${dataset.accounts.length}。`,
             "info",
             "ProfileProbe"
           );
@@ -2137,7 +2137,7 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
           setProgress("xfc-probe-progress", { phase: "error", message });
           log(message, "error", "ProfileProbe");
         } finally {
-          setBusy("xfc-probe-start", false, "", "开始探测");
+          setBusy("xfc-probe-start", false, "", "开始检查");
           await restoreState();
         }
       };
@@ -2154,7 +2154,7 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
       syncProbeLimitLock();
       el("xfc-probe-stop").onclick = () => {
         app.profileProbe.stop();
-        log("已请求停止匿名探测，将在当前请求结束并保存缓冲结果后暂停。", "warn", "ProfileProbe");
+        log("已请求停止推文检查，将在当前请求结束并保存缓冲结果后暂停。", "warn", "ProfileProbe");
       };
       el("xfc-unfollow-stop").onclick = () => {
         app.unfollow.stop();
@@ -2227,7 +2227,7 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
 (function (app) {
   if (location.hostname === "x.com") {
     app.panel.mount();
-    GM_registerMenuCommand("打开关注清理助手", () => {
+    GM_registerMenuCommand("打开 X/推特取关助手", () => {
       app.panel.open();
     });
     GM_registerMenuCommand("导出当前 CSV", async () => {

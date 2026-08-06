@@ -77,7 +77,7 @@
     stopRequested: false,
 
     async start(options = {}, onProgress = () => {}) {
-      if (this.running) throw new Error("匿名主页探测已经在运行。");
+      if (this.running) throw new Error("最近推文检查已经在运行。");
       let dataset = await app.loadDataset();
       if (!dataset.accounts.length) throw new Error("请先导出关注列表。");
       const sourceUserId = String(dataset.source_user_id || "");
@@ -127,8 +127,8 @@
       onProgress({
         phase: targets.length ? "start" : "complete",
         message: targets.length
-          ? `整体已探测 ${overallCompleted()}/${overallTotal} · 本轮 ${targets.length} · 并发 ${concurrency}`
-          : `已探测 ${overallCompleted()}/${overallTotal}，没有待处理账号`,
+          ? `整体已检查 ${overallCompleted()}/${overallTotal} · 本轮 ${targets.length} · 并发 ${concurrency}`
+          : `已检查 ${overallCompleted()}/${overallTotal}，没有待处理账号`,
         current: overallCompleted(),
         total: overallTotal,
         batch_current: 0,
@@ -151,7 +151,7 @@
         const taskSnapshot = { ...dataset.profile_probe, updated_at: app.nowIso() };
         saveChain = saveChain.then(async () => {
           await app.saveProbeResults(sourceUserId, batch, taskSnapshot);
-          if (!await app.heartbeatTaskLease(lease)) throw new Error("匿名探测任务租约已失效，任务停止。");
+          if (!await app.heartbeatTaskLease(lease)) throw new Error("推文检查任务租约已失效，任务停止。");
         });
         return saveChain;
       };
@@ -204,10 +204,10 @@
         pendingResults.push(result);
         scheduleFlush();
         if (pendingResults.length >= 5) await flushPending(true);
-        else if (!await app.heartbeatTaskLease(lease)) throw new Error("匿名探测任务租约已失效，任务停止。");
+        else if (!await app.heartbeatTaskLease(lease)) throw new Error("推文检查任务租约已失效，任务停止。");
         onProgress({
           phase: "progress",
-          message: `已探测 ${currentOverall}/${overallTotal} · 本轮 ${completed}/${targets.length}：@${target.screen_name} ${result.data_status}`,
+          message: `已检查 ${currentOverall}/${overallTotal} · 本轮 ${completed}/${targets.length}：@${target.screen_name} ${result.data_status}`,
           current: currentOverall,
           total: overallTotal,
           batch_current: completed,
@@ -229,7 +229,7 @@
         }
         while (!this.stopRequested && !fatalError) {
           if (!await app.heartbeatTaskLease(lease)) {
-            fatalError = new Error("匿名探测任务租约已失效，任务停止。");
+            fatalError = new Error("推文检查任务租约已失效，任务停止。");
             return;
           }
           const targetIndex = nextTargetIndex;
@@ -239,7 +239,7 @@
           let result;
           onProgress({
             phase: "request",
-            message: `已探测 ${overallCompleted()}/${overallTotal} · 正在请求本轮 ${targetIndex + 1}/${targets.length}：@${target.screen_name}`,
+            message: `已检查 ${overallCompleted()}/${overallTotal} · 正在请求本轮 ${targetIndex + 1}/${targets.length}：@${target.screen_name}`,
             current: overallCompleted(),
             total: overallTotal,
             batch_current: completed,
@@ -315,7 +315,7 @@
           await app.saveProbeTask(sourceUserId, dataset.profile_probe);
           onProgress({
             phase: "stopped",
-            message: `已暂停 · 整体已探测 ${overallCompleted()}/${overallTotal} · 本轮完成 ${completed}/${targets.length}`,
+            message: `已暂停 · 整体已检查 ${overallCompleted()}/${overallTotal} · 本轮完成 ${completed}/${targets.length}`,
             current: overallCompleted(),
             total: overallTotal,
             batch_current: completed,
@@ -339,8 +339,8 @@
           onProgress({
             phase: allAttempted ? "complete" : "stopped",
             message: allAttempted
-              ? `探测完成 · 已探测 ${currentOverall}/${overallTotal}`
-              : `本轮结束 · 整体已探测 ${currentOverall}/${overallTotal} · 本轮 ${completed}/${targets.length}`,
+              ? `检查完成 · 已检查 ${currentOverall}/${overallTotal}`
+              : `本轮结束 · 整体已检查 ${currentOverall}/${overallTotal} · 本轮 ${completed}/${targets.length}`,
             current: currentOverall,
             total: overallTotal,
             batch_current: completed,

@@ -178,12 +178,12 @@ function statusKind(account) {
 }
 function statusLabel(account) {
   const labels = {
-    ok: "已获取公开时间", protected: "帖子受保护", suspended: "账号已冻结",
+    ok: "已获取最近推文时间", protected: "帖子受保护", suspended: "账号已冻结",
     not_found: "账号不存在", empty_timeline: "尚未发帖",
     no_visible_posts: "无可见帖子", rate_limited: "请求受限",
     request_error: "请求失败", parse_error: "解析失败"
   };
-  return !account.fetched_at ? "等待探测" : (labels[account.data_status] || account.data_status || "数据异常");
+  return !account.fetched_at ? "等待检查" : (labels[account.data_status] || account.data_status || "检查异常");
 }
 function filteredAccounts() {
   const query = elements.query.value.trim().toLowerCase();
@@ -234,7 +234,7 @@ function accountCard(account) {
   identityText.append(name, make("p", "", `@${account.screen_name || account.account_id}`), make("small", `status ${statusKind(account)}`, statusLabel(account)));
   identity.append(identityText);
   const activity = make("div", "activity");
-  activity.append(make("small", "", "最后公开活动"), make("strong", "", account.inactive_days == null ? "未知" : account.inactive_days === 0 ? "今天" : `${account.inactive_days.toLocaleString("zh-CN")} 天前`), make("span", "", dateLabel(account.last_post_at)));
+  activity.append(make("small", "", "最近可见推文"), make("strong", "", account.inactive_days == null ? "未知" : account.inactive_days === 0 ? "今天" : `${account.inactive_days.toLocaleString("zh-CN")} 天前`), make("span", "", dateLabel(account.last_post_at)));
   const reach = make("div", "reach");
   reach.append(make("small", "", "粉丝"), make("strong", "", compact(account.followers_count)));
   const actions = make("div", "actions");
@@ -242,7 +242,7 @@ function accountCard(account) {
   const profile = make("a", "button primary", "打开主页"); profile.href = account.profile_url; profile.target = "_blank"; profile.rel = "noreferrer";
   links.append(profile);
   if (account.last_post_url) {
-    const post = make("a", "button ghost", "最后推文"); post.href = account.last_post_url; post.target = "_blank"; post.rel = "noreferrer"; links.append(post);
+    const post = make("a", "button ghost", "查看对应推文"); post.href = account.last_post_url; post.target = "_blank"; post.rel = "noreferrer"; links.append(post);
   }
   const decisions = make("div", "decisions");
   [["keep","保留"],["remove","待取消"],["done","已处理"]].forEach(([value,label]) => {
@@ -275,7 +275,7 @@ function render() {
     : probed >= state.accounts.length
       ? "已完成"
       : state.probeTask?.status === "running"
-        ? "探测中"
+        ? "检查中"
         : state.probeTask?.status === "error"
           ? "异常停止"
           : state.probeTask?.status === "paused"
@@ -324,11 +324,11 @@ function loadAccounts(accounts, source, sourceUserId = "", { preservePage = fals
   saveReviews(); state.source = source;
   if (!preservePage) state.page = 1;
   const probed = state.accounts.filter((account) => Boolean(account.fetched_at)).length;
-  const probeState = probed >= state.accounts.length && state.accounts.length ? "已完成" : probeTask?.status === "running" ? "探测中" : "未完成";
+  const probeState = probed >= state.accounts.length && state.accounts.length ? "已完成" : probeTask?.status === "running" ? "检查中" : "未完成";
   elements.notice.textContent =
     `已载入 ${state.accounts.length.toLocaleString("zh-CN")} 个账号，来源：${source}` +
     (state.sourceUserId ? `，所属账号：${state.sourceUserId}` : "") +
-    `；探测进度 ${probed.toLocaleString("zh-CN")}/${state.accounts.length.toLocaleString("zh-CN")}（${probeState}），未探测账号仍会显示在列表中。`;
+    `；推文检查进度 ${probed.toLocaleString("zh-CN")}/${state.accounts.length.toLocaleString("zh-CN")}（${probeState}），未检查账号仍会显示在列表中。`;
   render();
 }
 function bulk(value) {

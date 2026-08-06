@@ -1,13 +1,13 @@
-# X 关注清理助手技术说明
+# X/推特取关助手技术说明
 
-本文档描述 `0.8.0` 的当前实现、数据流、模块边界和后续多语言改造方案。面向后续维护者和接手项目的 AI；普通用户请先阅读 [README.md](./README.md) 上半部分。
+本文档描述 `0.8.2` 的当前实现、数据流、模块边界和后续多语言改造方案。面向后续维护者和接手项目的 AI；普通用户请先阅读 [README.md](./README.md) 上半部分。
 
 ## 1. 项目目标与边界
 
 项目帮助用户在本地完成四件事：
 
 1. 从当前登录的 X 账号导出完整关注列表。
-2. 匿名请求每个账号的公开主页，估算最近可见活动时间。
+2. 匿名请求每个账号的公开主页，估算最近可见推文时间。
 3. 在静态网页中筛选并标记保留、待取消或已处理。
 4. 把待取消队列交回 X 页面，由油猴脚本按批次和间隔执行。
 
@@ -46,7 +46,7 @@ src/metadata.txt       油猴元数据、权限、匹配域名和版本
 src/core.js            数据结构、GM 存储、账号隔离、CSV、日期工具
 src/curl.js            cURL 解析与请求模板净化
 src/following.js       Following 分页导出与断点续跑
-src/profile-probe.js   匿名公开主页请求与最近状态解析
+src/profile-probe.js   匿名公开主页请求与最近可见推文解析
 src/unfollow.js        取消队列、请求模板和分批执行
 src/bridge.js          静态页面与油猴存储之间的事件桥
 src/panel.js           X 页面中的控制面板、进度条和日志
@@ -86,13 +86,13 @@ web/download/          网页提供安装的构建产物
 - 探测结果只更新探测字段；累计 5 条或等待 2 秒后批量保存，暂停、完成、异常和页面隐藏时强制刷新缓冲区。
 - 同一账号的探测任务使用带过期时间的任务租约，避免多个 X 标签页重复执行。
 
-`last_post_at` 的准确含义是“匿名公开主页响应中可解析到的最新状态时间”。它不是完整发推历史，可能不包含登录后内容、受保护内容或 X 未在匿名 HTML 中下发的内容。
+`last_post_at` 的准确含义是“匿名公开主页响应中可解析到的最近可见推文时间”。它可以作为最后发推时间的近似值，但不是完整发推历史，可能不包含登录后内容、受保护内容或 X 未在匿名 HTML 中下发的内容。
 
 ### 4.3 静态筛选页面
 
 - 页面打开或刷新后自动从油猴脚本同步，并监听分层存储变化实时刷新。
 - 也支持直接导入 CSV。
-- 支持按名称、用户名、ID、活跃天数上下限、粉丝数上下限、探测状态、蓝标和审核状态筛选。
+- 支持按名称、用户名、ID、距最近可见推文天数上下限、粉丝数上下限、探测状态、蓝标和审核状态筛选。
 - 支持排序、快速筛选、分页、批量保留、批量待取消、清空和撤销。
 - 单账号可打开主页或最近状态链接。
 - 审核进度保存在页面 `localStorage`，并按 `source_user_id` 隔离。
@@ -152,8 +152,8 @@ web/download/          网页提供安装的构建产物
 | `is_blue_verified` / `verified_type` | 认证信息 |
 | `followers_count` / `following_count` | Following 返回的数量 |
 | `protected` | 是否为保护账号 |
-| `last_post_at` / `inactive_days` | 最近匿名可见状态时间及距今天数 |
-| `last_post_id` / `last_post_url` | 最近匿名可见状态 ID 与链接 |
+| `last_post_at` / `inactive_days` | 最近可见推文时间及距今天数 |
+| `last_post_id` / `last_post_url` | 最近可见推文 ID 与链接 |
 | `data_status` / `fetched_at` | 探测结果与探测时间 |
 | `review_status` | 空、`keep`、`remove` 或 `done` |
 | `unfollow_status` | 最近一次取消结果 |
@@ -248,7 +248,7 @@ Build output directory: web
 ```js
 const messages = {
   "zh-CN": {
-    "app.title": "关注清理台",
+    "app.title": "X/推特取关助手",
     "help.title": "使用流程",
     "filter.title": "筛选账号"
   },

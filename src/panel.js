@@ -38,10 +38,10 @@
       style.textContent = styles;
       document.head.append(style);
       document.body.insertAdjacentHTML("beforeend", `
-        <button id="xfc-launch" type="button">关注清理助手</button>
+        <button id="xfc-launch" type="button">X/推特取关助手</button>
         <aside id="xfc-panel" hidden>
           <header>
-            <h2>关注清理助手</h2>
+            <h2>X/推特取关助手</h2>
             <div class="xfc-header-actions">
               <a class="xfc-header-support" id="xfc-support" target="_blank" rel="noreferrer"><span aria-hidden="true">♥</span>赞助开发者</a>
               <button class="xfc-help-button" id="xfc-help-toggle" title="使用帮助" aria-label="使用帮助" aria-expanded="false">❓ 帮助</button>
@@ -52,8 +52,8 @@
             <strong>使用流程</strong>
             <ol>
               <li><b>导出关注列表：</b>从 X 读取当前账号的完整关注列表。</li>
-              <li><b>匿名探测：</b>不携带 X 登录 Cookie 请求公开主页，获取最近可见活动。</li>
-              <li><b>筛选与标记：</b>在筛选页标记保留或待取消账号。</li>
+              <li><b>检查最近推文：</b>不携带 X 登录 Cookie 请求公开主页，获取最近可见推文时间。</li>
+              <li><b>筛选与标记：</b>按距最近可见推文天数等条件，标记保留或待取消账号。</li>
               <li><b>发送队列：</b>把当前选择同步回油猴，已处理账号会自动排除。</li>
               <li><b>分批取消：</b>返回 X，设置数量和间隔，确认后执行。</li>
             </ol>
@@ -84,7 +84,7 @@
               <div class="xfc-progress" id="xfc-following-progress" hidden><div class="xfc-progress-track"><span class="xfc-progress-bar"></span></div><small>等待开始</small></div>
             </section>
             <section>
-              <h3>2. 匿名探测公开主页</h3>
+              <h3>2. 检查最近可见推文时间</h3>
               <div class="row">
                 <label>本次最多<input id="xfc-probe-limit" type="number" min="0" value="50"></label>
                 <label>间隔（秒）<input id="xfc-probe-delay" type="number" min="1" value="3"></label>
@@ -92,7 +92,7 @@
                 <label><span>数量</span><span><input id="xfc-probe-all" type="checkbox">处理全部剩余</span></label>
                 <label><span>范围</span><span><input id="xfc-retry-failed" type="checkbox">重试全部异常</span></label>
               </div>
-              <div class="row"><button class="primary" id="xfc-probe-start">开始探测</button><button id="xfc-probe-stop">停止探测</button></div>
+              <div class="row"><button class="primary" id="xfc-probe-start">开始检查</button><button id="xfc-probe-stop">停止检查</button></div>
               <div class="xfc-progress" id="xfc-probe-progress" hidden><div class="xfc-progress-track"><span class="xfc-progress-bar"></span></div><small>等待开始</small></div>
             </section>
             <section>
@@ -229,7 +229,7 @@
         if (queue.length) {
           setProgress("xfc-unfollow-progress", {
             phase: "stopped",
-            message: `活动取消队列待处理 ${pending.length} 人 · 历史成功 ${success}`,
+            message: `取消队列待处理 ${pending.length} 人 · 历史成功 ${success}`,
             current: 0,
             total: pending.length
           });
@@ -244,7 +244,7 @@
         const probed = dataset.accounts.filter((account) => account.fetched_at).length;
         const sourceUserId = String(dataset.source_user_id || "");
         el("xfc-account-summary").textContent = sourceUserId
-          ? `当前数据账号：${sourceUserId} · 关注 ${total} 人 · 已探测 ${probed}/${total}`
+          ? `当前数据账号：${sourceUserId} · 关注 ${total} 人 · 已检查 ${probed}/${total}`
           : "尚无账号数据，请先导出关注列表。";
         if (total || dataset.following_page) {
           setProgress("xfc-following-progress", {
@@ -269,8 +269,8 @@
                   : "stopped",
             message:
               savedStatus === "running"
-                ? `${app.profileProbe.running ? "正在探测" : "上次任务中断，可安全继续"} · 已探测 ${probed}/${total}`
-                : `已探测 ${probed}/${total} · ${savedStatus === "error" ? "上次任务异常停止" : probed >= total ? "全部完成" : "等待继续"}`,
+                ? `${app.profileProbe.running ? "正在检查" : "上次任务中断，可安全继续"} · 已检查 ${probed}/${total}`
+                : `已检查 ${probed}/${total} · ${savedStatus === "error" ? "上次任务异常停止" : probed >= total ? "全部完成" : "等待继续"}`,
             current: probed,
             total
           });
@@ -361,7 +361,7 @@
         }
       };
       el("xfc-probe-start").onclick = async () => {
-        setBusy("xfc-probe-start", true, "正在探测…", "开始探测");
+        setBusy("xfc-probe-start", true, "正在检查…", "开始检查");
         try {
           const dataset = await app.profileProbe.start({
             limit: el("xfc-probe-all").checked ? 0 : Number(el("xfc-probe-limit").value),
@@ -370,7 +370,7 @@
             retryFailed: el("xfc-retry-failed").checked
           }, (update) => setProgress("xfc-probe-progress", update));
           log(
-            `本轮匿名探测结束，整体 ${dataset.profile_probe?.completed || 0}/${dataset.accounts.length}。`,
+            `本轮推文检查结束，整体 ${dataset.profile_probe?.completed || 0}/${dataset.accounts.length}。`,
             "info",
             "ProfileProbe"
           );
@@ -384,7 +384,7 @@
           setProgress("xfc-probe-progress", { phase: "error", message });
           log(message, "error", "ProfileProbe");
         } finally {
-          setBusy("xfc-probe-start", false, "", "开始探测");
+          setBusy("xfc-probe-start", false, "", "开始检查");
           await restoreState();
         }
       };
@@ -401,7 +401,7 @@
       syncProbeLimitLock();
       el("xfc-probe-stop").onclick = () => {
         app.profileProbe.stop();
-        log("已请求停止匿名探测，将在当前请求结束并保存缓冲结果后暂停。", "warn", "ProfileProbe");
+        log("已请求停止推文检查，将在当前请求结束并保存缓冲结果后暂停。", "warn", "ProfileProbe");
       };
       el("xfc-unfollow-stop").onclick = () => {
         app.unfollow.stop();
