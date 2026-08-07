@@ -32,6 +32,7 @@ assert.match(bundle, /syncProbeLimitLock/);
 assert.match(bundle, /limit\.readOnly = locked/);
 assert.match(bundle, /id="xfc-help-toggle"/);
 assert.match(bundle, /id="xfc-support"/);
+assert.match(bundle, /xfc-header-actions[\s\S]*id="xfc-help-toggle"[\s\S]*id="xfc-support"/);
 assert.match(bundle, /<dialog id="xfc-support-prompt"/);
 assert.match(bundle, /prompt\.showModal\(\)/);
 assert.match(bundle, /scrollTo\(\{ top: 0, behavior: "smooth" \}\)/);
@@ -54,6 +55,9 @@ assert.match(bundle, /清空当前账号数据/);
 assert.match(bundle, /数据管理 · 清空\/重置/);
 assert.doesNotMatch(bundle, /document\.documentElement\.style\.overflow/);
 assert.match(bundle, /GM_addValueChangeListener/);
+assert.match(bundle, /xfc:restore-dataset/);
+assert.match(bundle, /xfc:restore-saved/);
+assert.match(bundle, /只有数据为空时才能从 CSV 恢复/);
 assert.doesNotMatch(bundle, /__DASHBOARD_MATCH__/);
 assert.doesNotMatch(bundle, /__DASHBOARD_(URL|ICON)__/);
 assert.doesNotMatch(bundle, /__USERSCRIPT_URL__/);
@@ -66,7 +70,9 @@ const sponsorSource = fs.readFileSync(path.join(root, "web", "sponsor", "sponsor
 assert.match(dashboardHtml, /<title>X\/推特取关助手/);
 assert.match(dashboardHtml, /筛选关注列表，安全分批取关/);
 assert.match(dashboardHtml, /id="help-dialog"/);
+assert.match(dashboardHtml, /id="restore-dialog"/);
 assert.match(dashboardHtml, /href="\.\/sponsor\/"/);
+assert.match(dashboardHtml, /❓ 帮助<\/button>[\s\S]*♥<\/span> 赞助开发者<\/a>/);
 assert.match(dashboardSource, /helpDialog\.showModal\(\)/);
 assert.match(dashboardHtml, /id="help-toggle"[^>]*>❓ 帮助<\/button>/);
 assert.match(dashboardSource, /document\.body\.classList\.add\("help-open"\)/);
@@ -83,6 +89,9 @@ assert.match(dashboardSource, /button\.classList\.toggle\("active", active\)/);
 assert.match(dashboardHtml, /id="page-jump"/);
 assert.match(dashboardHtml, /id="probe-count"/);
 assert.match(dashboardSource, /推文检查进度/);
+assert.match(dashboardSource, /xfc:restore-dataset/);
+assert.match(dashboardSource, /importedFromCsv/);
+assert.match(dashboardSource, /CSV 缺少所属账号 ID/);
 assert.match(bundle, /profile_probe: dataset\.profile_probe \|\| null/);
 assert.match(dashboardSource, /const jumpToPage = \(\) =>/);
 assert.match(dashboardSource, /Math\.min\(pages, Math\.max\(1, target\)\)/);
@@ -127,7 +136,9 @@ const app = context.window.XFollowCleaner;
 const knownTweetId = "1904571355950882816";
 assert.ok(Number.isFinite(app.snowflakeDate(knownTweetId)?.getTime()));
 assert.equal(app.inactiveDays("2999-01-01T00:00:00.000Z"), 0);
-assert.match(app.toCSV([{ account_id: "1", screen_name: "a" }]), /account_id,screen_name/);
+const csvWithSource = app.toCSV([{ account_id: "1", screen_name: "a" }], "999");
+assert.match(csvWithSource, /source_user_id,account_id,screen_name/);
+assert.equal(app.parseCSV(csvWithSource)[0].source_user_id, "999");
 assert.equal(app.parseCSV("account_id,screen_name\n1,test\n")[0].screen_name, "test");
 assert.equal(app.getLoggedAccountId(), "12345");
 await app.saveDataset({
@@ -248,6 +259,60 @@ assert.equal(profileWrites, 2);
 const unfollowSource = fs.readFileSync(path.join(root, "src", "unfollow.js"), "utf8");
 context.fetch = async () => ({ status: 200, ok: true });
 vm.runInNewContext(unfollowSource, context);
+await app.saveDataset({
+  ...app.emptyDataset("777"),
+  completed_following: true,
+  accounts: [{ account_id: "70", screen_name: "before_clear", review_status: "remove" }]
+});
+await app.clearActiveData();
+assert.equal(await app.getActiveSourceId(), "777");
+assert.equal((await app.loadDataset()).accounts.length, 0);
+
+const bridgeSource = fs.readFileSync(path.join(root, "src", "bridge.js"), "utf8");
+const bridgeWindow = new EventTarget();
+bridgeWindow.XFollowCleaner = app;
+const bridgeContext = {
+  window: bridgeWindow,
+  location: { hostname: "clean.example.com" },
+  CustomEvent: context.CustomEvent,
+  setTimeout,
+  clearTimeout,
+  console
+};
+vm.runInNewContext(bridgeSource, bridgeContext);
+app.bridge.install();
+const restoredPromise = new Promise((resolve, reject) => {
+  bridgeWindow.addEventListener("xfc:restore-saved", (event) => resolve(event.detail), { once: true });
+  bridgeWindow.addEventListener("xfc:restore-error", (event) => reject(new Error(event.detail.message)), { once: true });
+});
+bridgeWindow.dispatchEvent(new context.CustomEvent("xfc:restore-dataset", {
+  detail: {
+    dataset: {
+      source_user_id: "777",
+      accounts: [{
+        account_id: "70",
+        screen_name: "restored",
+        review_status: "remove",
+        data_status: "ok",
+        fetched_at: "2026-08-01T00:00:00.000Z"
+      }]
+    }
+  }
+}));
+const restoredDetail = await restoredPromise;
+assert.equal(restoredDetail.restored, 1);
+assert.equal(restoredDetail.queued, 1);
+assert.equal((await app.loadDataset("777")).accounts[0].screen_name, "restored");
+assert.equal((await app.loadUnfollowQueue("777")).length, 1);
+
+const conflictPromise = new Promise((resolve) => {
+  bridgeWindow.addEventListener("xfc:restore-error", (event) => resolve(event.detail.message), { once: true });
+});
+bridgeWindow.dispatchEvent(new context.CustomEvent("xfc:restore-dataset", {
+  detail: { dataset: { source_user_id: "888", accounts: [{ account_id: "80", screen_name: "wrong" }] } }
+}));
+assert.match(await conflictPromise, /账号不一致/);
+
 await app.saveDataset({
   ...app.emptyDataset("12345"),
   completed_following: true,

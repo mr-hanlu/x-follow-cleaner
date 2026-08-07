@@ -44,8 +44,8 @@
           <header>
             <h2>X/推特取关助手</h2>
             <div class="xfc-header-actions">
-              <a class="xfc-header-support" id="xfc-support" target="_blank" rel="noreferrer"><span aria-hidden="true">♥</span>赞助开发者</a>
               <button class="xfc-help-button" id="xfc-help-toggle" title="使用帮助" aria-label="使用帮助" aria-expanded="false">❓ 帮助</button>
+              <a class="xfc-header-support" id="xfc-support" target="_blank" rel="noreferrer"><span aria-hidden="true">♥</span>赞助开发者</a>
               <button id="xfc-close">关闭</button>
             </div>
           </header>
@@ -511,7 +511,7 @@
       };
       el("xfc-export").onclick = async () => {
         const dataset = await app.loadDataset();
-        app.download("x_following_cleaner.csv", app.toCSV(dataset.accounts), "text/csv;charset=utf-8");
+        app.download("x_following_cleaner.csv", app.toCSV(dataset.accounts, dataset.source_user_id), "text/csv;charset=utf-8");
         log(`已导出 CSV，共 ${dataset.accounts.length} 行。`);
       };
       el("xfc-clear-data").onclick = async () => {

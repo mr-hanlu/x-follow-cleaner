@@ -6,7 +6,7 @@
     });
     GM_registerMenuCommand("导出当前 CSV", async () => {
       const dataset = await app.loadDataset();
-      app.download("x_following_cleaner.csv", app.toCSV(dataset.accounts), "text/csv;charset=utf-8");
+      app.download("x_following_cleaner.csv", app.toCSV(dataset.accounts, dataset.source_user_id), "text/csv;charset=utf-8");
     });
     GM_registerMenuCommand("赞助开发者", () => {
       window.open(app.sponsorUrl, "_blank", "noopener,noreferrer");

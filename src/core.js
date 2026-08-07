@@ -30,6 +30,7 @@
     SETTINGS_KEY,
     TWITTER_EPOCH_MS,
     columns: [
+      "source_user_id",
       "account_id",
       "screen_name",
       "name",
@@ -495,7 +496,6 @@
     await app.gmDelete(app.taskLeaseKey(sourceUserId, "following"));
     await app.gmDelete(app.queueKey(sourceUserId));
     await app.gmDelete(app.templateKey(sourceUserId));
-    await app.gmDelete(ACTIVE_SOURCE_KEY);
     return sourceUserId;
   };
 
@@ -534,11 +534,15 @@
     return `"${String(value ?? "").replaceAll('"', '""')}"`;
   };
 
-  app.toCSV = function (accounts) {
+  app.toCSV = function (accounts, sourceUserId = "") {
     const columns = app.constants.columns;
     return `\uFEFF${[
       columns.join(","),
-      ...accounts.map((account) => columns.map((column) => app.csvCell(account[column])).join(","))
+      ...accounts.map((account) => columns.map((column) => app.csvCell(
+        column === "source_user_id"
+          ? sourceUserId || account.source_user_id || ""
+          : account[column]
+      )).join(","))
     ].join("\n")}`;
   };
 

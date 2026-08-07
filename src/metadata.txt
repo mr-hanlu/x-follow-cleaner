@@ -3,7 +3,7 @@
 // @name:zh-CN   X/推特取关助手｜最近推文筛选与安全批量取关
 // @name:en      X Following Cleaner – Latest Post Review & Safe Batch Unfollow
 // @namespace    https://github.com/mr-hanlu/x-follow-cleaner
-// @version      0.8.2
+// @version      0.8.3
 // @description  本地导出并筛选 X/推特关注列表，检查最近可见推文时间，再将确认过的账号安全分批取关。
 // @description:zh-CN X/推特批量取关工具：本地筛选关注列表，匿名检查最近可见推文时间，按确认队列安全取消关注。
 // @description:en Export and review your X/Twitter following list locally, check the latest publicly visible post time, and unfollow confirmed accounts in controlled batches.

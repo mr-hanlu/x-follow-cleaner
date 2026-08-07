@@ -18,6 +18,10 @@ const state = {
   reviews: initialReviewState.reviews,
   dirty: initialReviewState.dirty,
   remoteQueue: [],
+  remoteSourceUserId: "",
+  remoteAccountCount: 0,
+  importedFromCsv: false,
+  importSourceValid: false,
   sourceUserId: "",
   page: 1,
   pageSize: 50,
@@ -61,6 +65,18 @@ helpDialog.onclick = (event) => {
   if (event.target === helpDialog) closeHelp();
 };
 helpDialog.addEventListener("close", () => document.body.classList.remove("help-open"));
+const restoreDialog = $("#restore-dialog");
+function confirmDatasetRestore({ sourceUserId, accountCount, removeCount }) {
+  $("#restore-source").textContent = sourceUserId;
+  $("#restore-count").textContent = `${accountCount.toLocaleString("zh-CN")} 人`;
+  $("#restore-remove-count").textContent = `${removeCount.toLocaleString("zh-CN")} 人`;
+  restoreDialog.returnValue = "";
+  return new Promise((resolve) => {
+    restoreDialog.addEventListener("close", () => resolve(restoreDialog.returnValue === "restore"), { once: true });
+    restoreDialog.showModal();
+    restoreDialog.querySelector('button[value="cancel"]').focus();
+  });
+}
 new ResizeObserver(syncTopbarHeight).observe(topbar);
 syncTopbarHeight();
 
@@ -299,7 +315,8 @@ function render() {
   elements.pageJump.value = String(state.page);
   elements.previous.disabled = state.page <= 1; elements.next.disabled = state.page >= pages;
   elements.save.disabled = !state.accounts.length;
-  elements.send.disabled = !state.bridge || !state.accounts.length;
+  elements.send.disabled = !state.bridge || !state.accounts.length ||
+    (state.importedFromCsv && !state.importSourceValid);
   elements.send.textContent = state.dirty.size
     ? `发送待取消队列 · ${state.dirty.size} 项未同步`
     : "发送待取消队列";
@@ -310,17 +327,30 @@ function render() {
     elements.empty.lastElementChild.textContent = state.accounts.length ? "请放宽或重置筛选条件。" : "从油猴同步或导入 CSV 后即可开始。";
   }
 }
-function loadAccounts(accounts, source, sourceUserId = "", { preservePage = false, probeTask = null } = {}) {
+function loadAccounts(accounts, source, sourceUserId = "", { preservePage = false, probeTask = null, imported = false } = {}) {
   const normalizedSource = String(sourceUserId || accounts[0]?.source_user_id || "");
-  if (normalizedSource !== state.sourceUserId) {
+  const normalizedAccounts = normalize(accounts);
+  if (imported) {
+    state.sourceUserId = normalizedSource;
+    state.pendingReviews.clear();
+    state.reviews = {};
+    state.dirty = new Set();
+    for (const account of normalizedAccounts) {
+      const status = String(account.review_status || "");
+      state.reviews[account.account_id] = ["", "keep", "remove", "done"].includes(status) ? status : "";
+      state.dirty.add(account.account_id);
+    }
+  } else if (normalizedSource !== state.sourceUserId) {
     state.sourceUserId = normalizedSource;
     state.pendingReviews.clear();
     const reviewState = loadReviewState(normalizedSource);
     state.reviews = reviewState.reviews;
     state.dirty = reviewState.dirty;
   }
-  state.accounts = normalize(accounts);
+  state.accounts = normalizedAccounts;
   state.probeTask = probeTask;
+  state.importedFromCsv = imported;
+  state.importSourceValid = !imported || /^\d+$/.test(normalizedSource);
   saveReviews(); state.source = source;
   if (!preservePage) state.page = 1;
   const probed = state.accounts.filter((account) => Boolean(account.fetched_at)).length;
@@ -375,11 +405,14 @@ window.addEventListener("xfc:bridge-ready", () => {
 });
 window.addEventListener("xfc:dataset", (event) => {
   const preservePage = receivedDataset && String(event.detail?.source_user_id || "") === state.sourceUserId;
+  const remoteAccounts = Array.isArray(event.detail?.accounts) ? event.detail.accounts : [];
   clearTimeout(syncTimer);
   syncPending = false;
   receivedDataset = true;
   state.bridge = true;
   state.remoteQueue = Array.isArray(event.detail?.queue) ? event.detail.queue : [];
+  state.remoteSourceUserId = String(event.detail?.source_user_id || "");
+  state.remoteAccountCount = remoteAccounts.length;
   elements.bridge.textContent = "油猴已连接";
   elements.bridge.className = "pill good";
   elements.sync.disabled = false;
@@ -388,8 +421,21 @@ window.addEventListener("xfc:dataset", (event) => {
     accounts: event.detail?.accounts?.length || 0,
     updated_at: event.detail?.updated_at || ""
   });
+  if (state.importedFromCsv && remoteAccounts.length === 0) {
+    if (!state.importSourceValid && /^\d+$/.test(state.remoteSourceUserId)) {
+      state.sourceUserId = state.remoteSourceUserId;
+      state.importSourceValid = true;
+      state.accounts.forEach((account) => { account.source_user_id = state.remoteSourceUserId; });
+      saveReviews();
+    }
+    elements.notice.textContent = state.importSourceValid
+      ? "油猴本地数据为空，已保留当前 CSV。点击“发送待取消队列”可确认恢复数据。"
+      : "油猴本地数据为空，已保留当前 CSV；但文件缺少所属账号 ID，无法安全恢复。";
+    render();
+    return;
+  }
   loadAccounts(
-    event.detail?.accounts || [],
+    remoteAccounts,
     "油猴本地数据",
     event.detail?.source_user_id || "",
     { preservePage, probeTask: event.detail?.profile_probe || null }
@@ -423,22 +469,141 @@ window.addEventListener("xfc:reviews-error", (event) => {
   elements.notice.textContent = event.detail?.message || "写回失败，请重新同步后重试。";
   dashboardLog("error", "审核标记写回失败。", event.detail);
 });
+window.addEventListener("xfc:restore-saved", (event) => {
+  clearTimeout(queueTimer);
+  state.pendingReviews.clear();
+  state.reviews = {};
+  state.dirty.clear();
+  state.importedFromCsv = false;
+  state.importSourceValid = true;
+  saveReviews();
+  elements.send.disabled = false;
+  elements.send.textContent = "发送待取消队列";
+  elements.notice.textContent =
+    `已从 CSV 恢复 ${event.detail?.restored || 0} 个账号；待处理队列 ${event.detail?.queued || 0} 人。`;
+  dashboardLog("info", "CSV 数据已恢复到油猴。", event.detail);
+  render();
+});
+window.addEventListener("xfc:restore-error", (event) => {
+  clearTimeout(queueTimer);
+  state.pendingReviews.clear();
+  elements.send.disabled = false;
+  elements.send.textContent = "发送待取消队列";
+  elements.notice.textContent = event.detail?.message || "CSV 恢复失败，请检查账号和文件后重试。";
+  dashboardLog("error", "CSV 数据恢复失败。", event.detail);
+});
 elements.sync.onclick = () => requestDataset();
 elements.file.onchange = async (event) => {
   const file = event.target.files?.[0]; if (!file) return;
   const rows = parseCSV(await file.text());
-  loadAccounts(rows, file.name, rows[0]?.source_user_id || "");
+  if (!rows.length) {
+    elements.notice.textContent = "CSV 中没有可读取的账号数据。";
+    elements.file.value = "";
+    return;
+  }
+  const invalidAccountCount = rows.filter((row) => !/^\d+$/.test(String(row.account_id || ""))).length;
+  if (invalidAccountCount) {
+    elements.notice.textContent = `CSV 中有 ${invalidAccountCount} 条无效账号记录，未导入。`;
+    elements.file.value = "";
+    return;
+  }
+  const accountIds = rows.map((row) => String(row.account_id));
+  if (new Set(accountIds).size !== accountIds.length) {
+    elements.notice.textContent = "CSV 中存在重复账号 ID，未导入。";
+    elements.file.value = "";
+    return;
+  }
+  const declaredSources = new Set(rows.map((row) => String(row.source_user_id || "")).filter(Boolean));
+  let sourceUserId = "";
+  let sourceMessage = "";
+  if (declaredSources.size > 1) {
+    elements.notice.textContent = "CSV 中包含多个所属账号 ID，为避免串号，未导入。";
+    elements.file.value = "";
+    return;
+  }
+  if (declaredSources.size === 1) {
+    sourceUserId = Array.from(declaredSources)[0];
+    if (!/^\d+$/.test(sourceUserId) || rows.some((row) => !row.source_user_id)) {
+      sourceMessage = "CSV 的所属账号 ID 不完整，当前只能本地查看，不能同步到油猴。";
+      sourceUserId = "";
+    }
+  } else if (/^\d+$/.test(state.remoteSourceUserId)) {
+    sourceUserId = state.remoteSourceUserId;
+    rows.forEach((row) => { row.source_user_id = sourceUserId; });
+    sourceMessage = `旧版 CSV 未包含所属账号 ID，已使用油猴当前账号 ${sourceUserId}。`;
+  } else {
+    sourceMessage = "CSV 缺少所属账号 ID，当前只能本地查看。请先在 X 重新导出关注列表，或使用新版备份。";
+  }
+  loadAccounts(rows, file.name, sourceUserId, { imported: true });
+  elements.notice.textContent = sourceMessage ||
+    `已从 ${file.name} 导入 ${rows.length.toLocaleString("zh-CN")} 个账号；CSV 中的审核标记已列为待同步。`;
   elements.file.value = "";
 };
 elements.save.onclick = () => downloadCSV(`x_following_reviewed_${new Date().toISOString().slice(0,10).replaceAll("-","")}.csv`, state.accounts);
-elements.send.onclick = () => {
+elements.send.onclick = async () => {
   if (!state.bridge) { elements.notice.textContent = "没有连接油猴脚本，请先安装对应域名版本并刷新页面。"; return; }
+  if (state.importedFromCsv && !receivedDataset) {
+    elements.notice.textContent = "正在确认油猴当前数据，请同步完成后再发送。";
+    requestDataset({ force: true });
+    return;
+  }
+  if (state.importedFromCsv && !state.importSourceValid) {
+    elements.notice.textContent = "CSV 缺少有效的所属账号 ID，无法安全同步到油猴。";
+    return;
+  }
+  if (
+    state.importedFromCsv &&
+    state.remoteSourceUserId &&
+    state.remoteSourceUserId !== state.sourceUserId
+  ) {
+    elements.notice.textContent =
+      `账号不一致：油猴当前数据属于 ${state.remoteSourceUserId}，CSV 属于 ${state.sourceUserId}。`;
+    return;
+  }
   const reviews = state.accounts
     .filter((account) => state.dirty.has(account.account_id))
     .map((account) => ({ account_id: account.account_id, review_status: reviewOf(account) }));
   const removeIds = state.accounts
     .filter((account) => reviewOf(account) === "remove")
     .map((account) => account.account_id);
+  if (state.importedFromCsv && state.remoteAccountCount === 0) {
+    const confirmed = await confirmDatasetRestore({
+      sourceUserId: state.sourceUserId,
+      accountCount: state.accounts.length,
+      removeCount: removeIds.length
+    });
+    if (!confirmed) return;
+    clearTimeout(queueTimer);
+    elements.send.disabled = true;
+    elements.send.textContent = "恢复中…";
+    elements.notice.textContent = "正在从 CSV 恢复油猴本地数据并生成待取消队列…";
+    dashboardLog("info", "请求从 CSV 恢复油猴数据集。", {
+      source_user_id: state.sourceUserId,
+      accounts: state.accounts.length,
+      remove: removeIds.length
+    });
+    window.dispatchEvent(new CustomEvent("xfc:restore-dataset", {
+      detail: {
+        dataset: {
+          schema_version: "x-follow-cleaner-v3",
+          source_user_id: state.sourceUserId,
+          completed_following: false,
+          accounts: state.accounts.map((account) => ({
+            ...account,
+            source_user_id: state.sourceUserId,
+            review_status: reviewOf(account)
+          }))
+        }
+      }
+    }));
+    queueTimer = setTimeout(() => {
+      elements.send.disabled = false;
+      elements.send.textContent = "发送待取消队列";
+      elements.notice.textContent = "恢复超时：油猴数据桥没有响应，请刷新页面后重试。";
+      dashboardLog("warn", "等待 CSV 恢复确认超时。");
+    }, 8000);
+    return;
+  }
   if (
     removeIds.length === 0 &&
     state.remoteQueue.length > 0 &&

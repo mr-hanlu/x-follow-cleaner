@@ -19,7 +19,7 @@
       <div class="top-actions">
         <span id="bridge-state" class="pill warning">未连接油猴</span>
         <button class="help-button" id="help-toggle" title="使用帮助" aria-label="使用帮助">❓ 帮助</button>
-        <a class="button support-button" href="./sponsor/"><span aria-hidden="true">♥</span> 支持开发</a>
+        <a class="button support-button" href="./sponsor/"><span aria-hidden="true">♥</span> 赞助开发者</a>
         <a class="button ghost" href="./download/x-follow-cleaner.user.js">安装油猴脚本</a>
         <button class="button ghost" id="sync-userscript">从油猴同步</button>
         <label class="button ghost file-button">导入 CSV<input id="csv-file" type="file" accept=".csv,text/csv" /></label>
@@ -38,6 +38,28 @@
         <li><strong>返回 X 分批执行</strong><span>设置本批数量和间隔，确认后执行。</span></li>
       </ol>
       <p>数据默认保存在当前浏览器。建议定期使用“保存进度 CSV”备份。</p>
+    </dialog>
+
+    <dialog id="restore-dialog" aria-labelledby="restore-title">
+      <form method="dialog">
+        <div class="restore-dialog-head">
+          <h2 id="restore-title">从 CSV 恢复油猴数据</h2>
+          <button value="cancel" aria-label="关闭恢复确认">关闭</button>
+        </div>
+        <div class="restore-dialog-body">
+          <p>检测到油猴本地数据为空。需要先恢复账号数据，才能同步待取消队列。</p>
+          <dl>
+            <dt>所属账号 ID</dt><dd id="restore-source">—</dd>
+            <dt>恢复账号</dt><dd id="restore-count">0 人</dd>
+            <dt>待取消</dt><dd id="restore-remove-count">0 人</dd>
+          </dl>
+          <p class="restore-warning">恢复只会在油猴数据为空时执行；真正取消关注前仍会核对当前 X 登录账号。</p>
+        </div>
+        <div class="restore-dialog-actions">
+          <button value="cancel">返回检查</button>
+          <button class="primary" value="restore">确认恢复并发送</button>
+        </div>
+      </form>
     </dialog>
 
     <main class="workspace">

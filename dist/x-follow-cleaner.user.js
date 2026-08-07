@@ -3,7 +3,7 @@
 // @name:zh-CN   X/推特取关助手｜最近推文筛选与安全批量取关
 // @name:en      X Following Cleaner – Latest Post Review & Safe Batch Unfollow
 // @namespace    https://github.com/mr-hanlu/x-follow-cleaner
-// @version      0.8.2
+// @version      0.8.3
 // @description  本地导出并筛选 X/推特关注列表，检查最近可见推文时间，再将确认过的账号安全分批取关。
 // @description:zh-CN X/推特批量取关工具：本地筛选关注列表，匿名检查最近可见推文时间，按确认队列安全取消关注。
 // @description:en Export and review your X/Twitter following list locally, check the latest publicly visible post time, and unfollow confirmed accounts in controlled batches.
@@ -68,6 +68,7 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
     SETTINGS_KEY,
     TWITTER_EPOCH_MS,
     columns: [
+      "source_user_id",
       "account_id",
       "screen_name",
       "name",
@@ -533,7 +534,6 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
     await app.gmDelete(app.taskLeaseKey(sourceUserId, "following"));
     await app.gmDelete(app.queueKey(sourceUserId));
     await app.gmDelete(app.templateKey(sourceUserId));
-    await app.gmDelete(ACTIVE_SOURCE_KEY);
     return sourceUserId;
   };
 
@@ -572,11 +572,15 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
     return `"${String(value ?? "").replaceAll('"', '""')}"`;
   };
 
-  app.toCSV = function (accounts) {
+  app.toCSV = function (accounts, sourceUserId = "") {
     const columns = app.constants.columns;
     return `\uFEFF${[
       columns.join(","),
-      ...accounts.map((account) => columns.map((column) => app.csvCell(account[column])).join(","))
+      ...accounts.map((account) => columns.map((column) => app.csvCell(
+        column === "source_user_id"
+          ? sourceUserId || account.source_user_id || ""
+          : account[column]
+      )).join(","))
     ].join("\n")}`;
   };
 
@@ -1720,6 +1724,13 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
         }
         const knownIds = new Set(dataset.accounts.map((account) => String(account.account_id)));
         const reviews = requestedReviews.filter((review) => knownIds.has(String(review.account_id || "")));
+        if (reviews.length !== requestedReviews.length) {
+          const unknown = requestedReviews.length - reviews.length;
+          const message = `有 ${unknown} 个账号不在油猴数据集中，请先同步或从 CSV 恢复数据。`;
+          app.log("error", "Bridge", message);
+          window.dispatchEvent(new CustomEvent("xfc:reviews-error", { detail: { message } }));
+          return;
+        }
         try {
           await app.saveReviewChanges(dataset.source_user_id, reviews);
           await app.prepareUnfollowRetries(dataset.source_user_id, reviews);
@@ -1738,6 +1749,66 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
           const message = error.message || String(error);
           app.log("error", "Bridge", message);
           window.dispatchEvent(new CustomEvent("xfc:reviews-error", { detail: { message } }));
+        }
+      });
+
+      window.addEventListener("xfc:restore-dataset", async (event) => {
+        try {
+          const imported = event.detail?.dataset;
+          const requestedSource = String(imported?.source_user_id || "");
+          const requestedAccounts = Array.isArray(imported?.accounts) ? imported.accounts : [];
+          if (!/^\d+$/.test(requestedSource)) {
+            throw new Error("CSV 缺少有效的所属账号 ID，无法安全恢复到油猴。");
+          }
+          if (!requestedAccounts.length) throw new Error("CSV 中没有可恢复的账号数据。");
+          const invalidAccounts = requestedAccounts.filter((account) =>
+            !/^\d+$/.test(String(account?.account_id || ""))
+          );
+          if (invalidAccounts.length) {
+            throw new Error(`CSV 中有 ${invalidAccounts.length} 条无效账号记录，已停止恢复。`);
+          }
+          const ids = requestedAccounts.map((account) => String(account.account_id));
+          if (new Set(ids).size !== ids.length) throw new Error("CSV 中存在重复账号 ID，已停止恢复。");
+
+          const current = await app.loadDataset();
+          const currentSource = String(current.source_user_id || "");
+          if (currentSource && currentSource !== requestedSource) {
+            throw new Error(`账号不一致：油猴当前数据属于 ${currentSource}，CSV 属于 ${requestedSource}。`);
+          }
+          if (current.accounts.length) {
+            throw new Error("油猴中已有关注数据。为避免覆盖，请先从油猴同步；只有数据为空时才能从 CSV 恢复。");
+          }
+
+          const restored = await app.saveDataset({
+            ...app.emptyDataset(requestedSource),
+            completed_following: Boolean(imported.completed_following),
+            following_cursor: String(imported.following_cursor || ""),
+            following_page: Math.max(0, Number(imported.following_page || 0)),
+            profile_probe: imported.profile_probe || null,
+            accounts: requestedAccounts.map((account) => ({
+              ...account,
+              account_id: String(account.account_id)
+            }))
+          });
+          const queueResult = await app.unfollow.queueAccounts();
+          watchSource(requestedSource);
+          await sendDataset();
+          window.dispatchEvent(new CustomEvent("xfc:restore-saved", {
+            detail: {
+              source_user_id: requestedSource,
+              restored: restored.accounts.length,
+              ...queueResult.stats
+            }
+          }));
+          app.log("info", "Bridge", "CSV 数据已恢复到油猴", {
+            source_user_id: requestedSource,
+            restored: restored.accounts.length,
+            queued: queueResult.stats.queued
+          });
+        } catch (error) {
+          const message = error.message || String(error);
+          app.log("error", "Bridge", message);
+          window.dispatchEvent(new CustomEvent("xfc:restore-error", { detail: { message } }));
         }
       });
 
@@ -1797,8 +1868,8 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
           <header>
             <h2>X/推特取关助手</h2>
             <div class="xfc-header-actions">
-              <a class="xfc-header-support" id="xfc-support" target="_blank" rel="noreferrer"><span aria-hidden="true">♥</span>赞助开发者</a>
               <button class="xfc-help-button" id="xfc-help-toggle" title="使用帮助" aria-label="使用帮助" aria-expanded="false">❓ 帮助</button>
+              <a class="xfc-header-support" id="xfc-support" target="_blank" rel="noreferrer"><span aria-hidden="true">♥</span>赞助开发者</a>
               <button id="xfc-close">关闭</button>
             </div>
           </header>
@@ -2264,7 +2335,7 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
       };
       el("xfc-export").onclick = async () => {
         const dataset = await app.loadDataset();
-        app.download("x_following_cleaner.csv", app.toCSV(dataset.accounts), "text/csv;charset=utf-8");
+        app.download("x_following_cleaner.csv", app.toCSV(dataset.accounts, dataset.source_user_id), "text/csv;charset=utf-8");
         log(`已导出 CSV，共 ${dataset.accounts.length} 行。`);
       };
       el("xfc-clear-data").onclick = async () => {
@@ -2354,7 +2425,7 @@ window.XFollowCleaner.sponsorUrl = "https://x-follow-cleaner.mrhanlu224.workers.
     });
     GM_registerMenuCommand("导出当前 CSV", async () => {
       const dataset = await app.loadDataset();
-      app.download("x_following_cleaner.csv", app.toCSV(dataset.accounts), "text/csv;charset=utf-8");
+      app.download("x_following_cleaner.csv", app.toCSV(dataset.accounts, dataset.source_user_id), "text/csv;charset=utf-8");
     });
     GM_registerMenuCommand("赞助开发者", () => {
       window.open(app.sponsorUrl, "_blank", "noopener,noreferrer");
